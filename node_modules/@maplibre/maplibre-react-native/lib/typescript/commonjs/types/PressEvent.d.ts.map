@@ -1,1 +1,0 @@
-{"version":3,"file":"PressEvent.d.ts","sourceRoot":"","sources":["../../../../src/types/PressEvent.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,MAAM,EAAE,MAAM,UAAU,CAAC;AACvC,OAAO,KAAK,EAAE,UAAU,EAAE,MAAM,cAAc,CAAC;AAE/C;;GAEG;AACH,MAAM,WAAW,UAAU;IACzB;;OAEG;IACH,MAAM,EAAE,MAAM,CAAC;IAEf;;OAEG;IACH,KAAK,EAAE,UAAU,CAAC;CACnB"}
