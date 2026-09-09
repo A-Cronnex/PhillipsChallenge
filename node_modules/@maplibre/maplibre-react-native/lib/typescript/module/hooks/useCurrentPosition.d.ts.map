@@ -1,0 +1,1 @@
+{"version":3,"file":"useCurrentPosition.d.ts","sourceRoot":"","sources":["../../../../src/hooks/useCurrentPosition.ts"],"names":[],"mappings":"AAEA,OAAO,EACL,KAAK,mBAAmB,EAEzB,MAAM,qCAAqC,CAAC;AAE7C,UAAU,yBAAyB;IACjC;;;;OAIG;IACH,OAAO,CAAC,EAAE,OAAO,CAAC;IAElB;;;;OAIG;IACH,eAAe,CAAC,EAAE,MAAM,CAAC;CAC1B;AAED,wBAAgB,kBAAkB,CAAC,EACjC,OAAc,EACd,eAAe,GAChB,GAAE,yBAA8B,mCA0BhC"}

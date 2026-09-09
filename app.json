@@ -1,0 +1,39 @@
+{
+  "expo": {
+    "name": "Hospital Equipment Intelligence",
+    "slug": "hospital-equipment-intelligence",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "hei",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.hei.app"
+    },
+    "android": {
+      "package": "com.hei.app"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-sqlite",
+      "@maplibre/maplibre-react-native",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 29
+          }
+        }
+      ],
+      "@qvac/sdk/expo-plugin",
+      "expo-audio",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "La aplicaci\u00f3n usa tus fotos para leer la placa del equipo en el dispositivo, sin enviarlas a ning\u00fan servidor.",
+          "cameraPermission": "La aplicaci\u00f3n usa la c\u00e1mara para fotografiar la placa del equipo. El an\u00e1lisis ocurre en el dispositivo."
+        }
+      ]
+    ]
+  }
+}

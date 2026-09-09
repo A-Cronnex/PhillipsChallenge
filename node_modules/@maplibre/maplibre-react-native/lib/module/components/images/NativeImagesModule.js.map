@@ -1,0 +1,1 @@
+{"version":3,"names":["Platform","TurboModuleRegistry","imagesModule","OS","getEnforcing"],"sourceRoot":"../../../../src","sources":["components/images/NativeImagesModule.ts"],"mappings":";;AAAA,SAASA,QAAQ,QAA0B,cAAc;AACzD,SAASC,mBAAmB,QAAQ,cAAc;AAIlD,MAAMC,YAAY,GAChBF,QAAQ,CAACG,EAAE,KAAK,KAAK,GACjBF,mBAAmB,CAACG,YAAY,CAAO,kBAAkB,CAAC,GAC1D,IAAI;AAEV,eAAeF,YAAY","ignoreList":[]}
