@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { CurrentUser } from '../../authentication/application/ports';
 import type { SiteSummary } from '../../sites/application/ports';
@@ -31,6 +31,7 @@ export interface SavedConfirmation {
  * a repository port (docs/architecture.md §6).
  */
 export function useObservationCapture() {
+  const submitting = useRef(false);
   const [phase, setPhase] = useState<CaptureScreenPhase>('loading');
   const [loadError, setLoadError] = useState<string | null>(null);
   const [sites, setSites] = useState<SiteSummary[]>([]);
@@ -83,7 +84,8 @@ export function useObservationCapture() {
   }, []);
 
   const submit = useCallback(async () => {
-    if (!currentUser) return;
+    if (!currentUser || submitting.current) return;
+    submitting.current = true;
     setSaving(true);
     setSaveError(null);
 
@@ -118,7 +120,10 @@ export function useObservationCapture() {
       setValues(
         emptyFormValues({ siteId: values.siteId, visitDate: values.visitDate })
       );
+    } catch {
+      setSaveError("No se pudo guardar. Los datos siguen en el formulario.");
     } finally {
+      submitting.current = false;
       setSaving(false);
     }
   }, [currentUser, values]);

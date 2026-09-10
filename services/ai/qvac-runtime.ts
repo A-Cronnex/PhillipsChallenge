@@ -1,19 +1,6 @@
-/**
- * QVAC implementation of the `AiRuntime` port.
- *
- * This is the only file that imports `@qvac/sdk`. Everything above it works
- * against the port, which is what allows the agent's rules to be tested
- * off-device — QVAC does not run on an emulator (docs/ai-agent.md §12).
- *
- * The API used here was verified against the installed `@qvac/sdk` 0.19.0:
- * `loadModel({ modelSrc })`, `completion({ modelId, history, stream:false })`
- * with `attachments: [{ path }]` for images, and `transcribe({ modelId, ... })`.
- * CLAUDE.md §18 lists the exact QVAC API as unresolved, so anything here that
- * turns out to differ on a real device is expected to change — see
- * docs/ai-agent-implementation.md §5.
- *
- * Security (docs/ai-agent.md §14): no raw audio, no image bytes and no prompt
- * contents are logged; only model ids and failure messages surface.
+import type { ModelDescriptor } from '@qvac/inference/surface';
+/** SDK adapter. Runtime imports live in lib/ai-runtime.ts; these imports are type-only.
+ * Verified against installed SDK 0.19 declarations/examples. Hardware behavior still needs a device.
  */
 import type {
   AiRuntime,
@@ -35,22 +22,15 @@ import { MODEL_REGISTRY_NAMES } from './models';
 /**
  * The subset of `@qvac/sdk` this adapter uses.
  *
- * Declared structurally so the adapter can be exercised against a stub in
- * tests without importing the native SDK, which cannot load under Jest.
+ * Derived from the installed SDK to catch API drift at compilation, with no native import in Jest.
  */
-export interface QvacApi {
-  loadModel(options: { modelSrc: unknown }): Promise<string>;
-  completion(params: {
-    modelId: string;
-    history: Array<{
-      role: 'system' | 'user' | 'assistant';
-      content: string;
-      attachments?: Array<{ path: string }>;
-    }>;
-    stream: false;
-    responseFormat?: { type: 'json_object' };
-  }): Promise<{ text: string }>;
-  transcribe(params: { modelId: string; path: string }): Promise<string>;
+export type QvacApi = Pick<typeof import('@qvac/sdk'), 'loadModel' | 'completion' | 'transcribe' | 'translate'>;
+
+/** Bare expects filesystem paths; HTTP/content URIs are not local files. */
+export function localFilePath(uri: string): string {
+  if (uri.startsWith('file://')) return decodeURIComponent(uri.slice(7));
+  if (uri.startsWith('/')) return uri;
+  throw new Error('Se requiere un archivo local del dispositivo.');
 }
 
 /** Registry descriptors, looked up by name at load time. */
@@ -85,18 +65,27 @@ export class UnusableModelOutputError extends Error {
 export function createQvacRuntime(options: QvacRuntimeOptions): AiRuntime {
   const loaded = new Map<string, string>();
 
-  function descriptor(name: string): unknown {
+  function descriptor(name: string): ModelDescriptor {
     const entry = options.catalog[name];
     if (entry === undefined) throw new ModelDescriptorMissingError(name);
-    return entry;
+    return entry as ModelDescriptor;
   }
 
+  const loading = new Map<string, Promise<string>>();
   async function modelId(name: string): Promise<string> {
     const existing = loaded.get(name);
     if (existing) return existing;
-    const id = await options.api.loadModel({ modelSrc: descriptor(name) });
-    loaded.set(name, id);
-    return id;
+    const pending = loading.get(name);
+    if (pending) return pending;
+    const direction = name === MODEL_REGISTRY_NAMES.translationEsEn ? { from: 'es', to: 'en' }
+      : name === MODEL_REGISTRY_NAMES.translationEnEs ? { from: 'en', to: 'es' } : null;
+    const task = options.api.loadModel({ modelSrc: descriptor(name),
+      ...(name === MODEL_REGISTRY_NAMES.vision ? { modelConfig: {
+        projectionModelSrc: descriptor(MODEL_REGISTRY_NAMES.visionProjector), ctx_size: 2048,
+      } } : direction ? { modelConfig: { engine: 'Bergamot', ...direction } } : {}),
+    }).then(id => { loaded.set(name, id); return id; });
+    loading.set(name, task);
+    try { return await task; } finally { loading.delete(name); }
   }
 
   async function complete(
@@ -121,7 +110,7 @@ export function createQvacRuntime(options: QvacRuntimeOptions): AiRuntime {
       responseFormat: { type: 'json_object' },
     });
 
-    const payload = extractJsonPayload(response.text);
+    const payload = extractJsonPayload(await response.text);
     if (payload === null) throw new UnusableModelOutputError(role);
 
     const parsed = parseExtraction(payload);
@@ -145,20 +134,21 @@ export function createQvacRuntime(options: QvacRuntimeOptions): AiRuntime {
     async extractFromText(
       request: TextExtractionRequest
     ): Promise<AgentExtraction> {
-      // NOTE: the Spanish→English translation bridge described in
-      // docs/tech-stack.md §7.2 is NOT applied here yet. See
-      // docs/ai-agent-implementation.md §4 — MedPsy is prompted directly in
-      // the user's language.
-      //
-      // Either way the storage rule in §7.2 holds without depending on the
-      // bridge: the prompt asks for verbatim values in the user's language,
-      // and `features/conversations/domain/language.ts` enforces it against
-      // what the user actually said before anything is recorded.
-      return complete(
-        MODEL_REGISTRY_NAMES.text,
-        'text',
-        textExtractionPrompt(request.text, request.targetFields, request.language)
-      );
+      let prompt = textExtractionPrompt(request.text, request.targetFields, request.language);
+      if (request.language === 'es') {
+        const id = await modelId(MODEL_REGISTRY_NAMES.translationEsEn);
+        const workingText = await options.api.translate({ modelId: id, text: request.text,
+          modelType: 'nmtcpp-translation', stream: false }).text;
+        prompt += '\nEnglish working copy (context only; copy field values from the original input):\n' + workingText
+          + '\nWrite followUpQuestion in English; field values must remain in the original Spanish.';
+      }
+      const extracted = await complete(MODEL_REGISTRY_NAMES.text, 'text', prompt);
+      if (request.language === 'es' && extracted.followUpQuestion) {
+        const id = await modelId(MODEL_REGISTRY_NAMES.translationEnEs);
+        extracted.followUpQuestion = await options.api.translate({ modelId: id, text: extracted.followUpQuestion,
+          modelType: 'nmtcpp-translation', stream: false }).text;
+      }
+      return extracted;
     },
 
     async extractFromImage(
@@ -168,13 +158,13 @@ export function createQvacRuntime(options: QvacRuntimeOptions): AiRuntime {
         MODEL_REGISTRY_NAMES.vision,
         'vision',
         imageExtractionPrompt(request.targetFields, request.language),
-        request.imagePath
+        localFilePath(request.imagePath)
       );
     },
 
     async transcribe(audioPath: string): Promise<string> {
       const id = await modelId(MODEL_REGISTRY_NAMES.speech);
-      return options.api.transcribe({ modelId: id, path: audioPath });
+      return options.api.transcribe({ modelId: id, audioChunk: localFilePath(audioPath) });
     },
   };
 }

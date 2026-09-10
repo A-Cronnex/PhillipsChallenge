@@ -223,3 +223,10 @@ describe('validateObservationDraft', () => {
     );
   });
 });
+
+test('rejects calendar dates JavaScript would silently normalize', () => {
+  const draft = { ...emptyObservationDraft(), siteId: 'site', brand: 'Marca', visitDate: '2026-02-30' };
+  const result = validateObservationDraft(draft, '2026-09-09');
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.issues).toContainEqual({ field: 'visitDate', code: 'visit_date_malformed' });
+});

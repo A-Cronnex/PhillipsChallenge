@@ -93,4 +93,5 @@ export function assertSelfHostedStyleUrl(url: string): void {
  * Defaults to `none`. Point it at the project's own style once tiles are
  * generated and served — see docs/maps.md §4.
  */
-export const basemapConfig: BasemapConfig = { mode: 'none' };
+const styleUrl = process.env.EXPO_PUBLIC_MAP_STYLE_URL?.trim();
+export const basemapConfig: BasemapConfig = styleUrl ? { mode: 'self_hosted_style', styleUrl } : { mode: 'none' };

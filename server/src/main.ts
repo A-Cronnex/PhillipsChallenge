@@ -1,3 +1,4 @@
+import { createTokenAuthenticator } from './http/token-authenticator';
 /**
  * Process entrypoint for the sync server.
  *
@@ -53,7 +54,9 @@ function normaliseHeaders(request: IncomingMessage): Record<string, string> {
 }
 
 function resolveAuthenticator(): Authenticator {
+  if (process.env.SYNC_DEVICE_CREDENTIALS) return createTokenAuthenticator(process.env.SYNC_DEVICE_CREDENTIALS);
   if (process.env.SYNC_ALLOW_INSECURE_DEV_AUTH === 'true') {
+    if (process.env.NODE_ENV === 'production') throw new Error('Development authentication is forbidden in production.');
     // Loud on purpose. This path trusts request headers and verifies nothing.
     console.warn(
       '[sync] SYNC_ALLOW_INSECURE_DEV_AUTH=true — requests are NOT authenticated. ' +
@@ -130,7 +133,8 @@ export function main(): void {
     }
   );
 
-  server.listen(port, () => {
+  const host = process.env.SYNC_ALLOW_INSECURE_DEV_AUTH === 'true' ? '127.0.0.1' : (process.env.HOST ?? '127.0.0.1');
+  server.listen(port, host, () => {
     console.log(`[sync] listening on :${port}`);
   });
 }

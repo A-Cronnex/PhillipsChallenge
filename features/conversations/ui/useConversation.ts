@@ -1,125 +1,89 @@
-import { useCallback, useMemo, useState } from 'react';
-
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { getRepositories } from '../../../lib/container';
 import { newId } from '../../../lib/id';
-import {
-  submitPhoto,
-  submitText,
-  submitVoice,
-  type TurnOutcome,
-} from '../application/conversation-orchestrator';
+import { submitPhoto, submitText, submitVoice, type TurnOutcome } from '../application/conversation-orchestrator';
 import type { AiRuntime } from '../application/ports';
-import {
-  addTurn,
-  startConversation,
-  type ConversationState,
-} from '../domain/conversation';
+import { addTurn, startConversation, type ConversationState } from '../domain/conversation';
 import { acceptsMorePhotos } from '../domain/vision-flow';
 
 export type RuntimePhase = 'idle' | 'preparing' | 'ready' | 'unavailable';
+export interface UseConversationOptions { runtime: AiRuntime; userId: string; now?: () => Date }
+const clock = () => new Date();
 
-export interface UseConversationOptions {
-  runtime: AiRuntime;
-  userId: string;
-  now?: () => Date;
-}
-
-/**
- * Screen state for the capture conversation.
- *
- * Holds no rules of its own: every decision about what the agent asks next
- * comes from the orchestrator and the §3a flow. This hook only turns outcomes
- * into things a screen can render.
- */
-export function useConversation({
-  runtime,
-  userId,
-  now = () => new Date(),
-}: UseConversationOptions) {
+export function useConversation({ runtime, userId, now = clock }: UseConversationOptions) {
   const [runtimePhase, setRuntimePhase] = useState<RuntimePhase>('idle');
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
-  const [conversation, setConversation] = useState<ConversationState>(() =>
-    startConversation(newId(), userId, now().toISOString())
-  );
+  const [conversation, setConversation] = useState(() => startConversation(newId(), userId, now().toISOString()));
   const [busy, setBusy] = useState(false);
+  const [restoring, setRestoring] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
+  const lock = useRef(false);
+  const restoreFailed = useRef(false);
+  useEffect(() => {
+    let active = true;
+    void getRepositories().then(r => r.conversations.latest(userId)).then(state => {
+      if (active && state) setConversation(state);
+    }).catch(() => {
+      restoreFailed.current = true;
+      if (active) setError('No se pudo recuperar la conversación. Vuelve a abrir la aplicación para reintentar.');
+    }).finally(() => { if (active) setRestoring(false); });
+    return () => { active = false; };
+  }, [userId]);
 
-  const deps = useMemo(
-    () => ({ runtime, now, language: 'es' as const }),
-    [runtime, now]
-  );
-
+  const checkpoint = useCallback(async (state: ConversationState) => {
+    setConversation(state);
+    await (await getRepositories()).conversations.save(state);
+  }, []);
   const prepare = useCallback(async () => {
-    setRuntimePhase('preparing');
-    setRuntimeError(null);
-    try {
-      await runtime.prepare();
-      setRuntimePhase('ready');
-    } catch (caught) {
-      // Loading models can fail for reasons the user can act on (storage,
-      // memory), so the message is surfaced rather than swallowed.
-      setRuntimeError(caught instanceof Error ? caught.message : String(caught));
-      setRuntimePhase('unavailable');
-    }
+    if (lock.current) return;
+    lock.current = true;
+    setRuntimePhase('preparing'); setRuntimeError(null);
+    try { await runtime.prepare(); setRuntimePhase('ready'); }
+    catch { setRuntimeError('No se pudo cargar QVAC. Comprueba conexión para la primera descarga, espacio libre y compatibilidad del dispositivo.'); setRuntimePhase('unavailable'); }
+    finally { lock.current = false; }
   }, [runtime]);
 
-  const handle = useCallback((outcome: TurnOutcome) => {
-    if (outcome.status === 'ok') {
-      setConversation(
-        addTurn(outcome.result.conversation, {
-          role: 'agent',
-          text: outcome.result.message,
-          source: 'text',
-          at: new Date().toISOString(),
-        })
-      );
-      setError(null);
-      return;
-    }
-
-    // docs/ai-agent.md §13: keep the conversation, inform the user, allow
-    // retry. The failing turn stays in the transcript.
-    setConversation(outcome.conversation);
-    setError(
-      outcome.status === 'inference_failed'
-        ? outcome.reason
-        : 'El modelo devolvió una respuesta que no se pudo interpretar.'
-    );
-  }, []);
-
-  const run = useCallback(
-    async (action: () => Promise<TurnOutcome>) => {
-      setBusy(true);
-      try {
-        handle(await action());
-      } finally {
-        setBusy(false);
+  async function run(action: () => Promise<TurnOutcome>): Promise<boolean> {
+    if (lock.current || restoring || restoreFailed.current || conversation.status === 'saved') return false;
+    lock.current = true; setBusy(true); setError(null); setWarning(null);
+    try {
+      const outcome = await action();
+      if (outcome.status === 'ok') {
+        const state = addTurn(outcome.result.conversation, { role: 'agent', text: outcome.result.message, source: 'text', at: now().toISOString() });
+        await checkpoint(state);
+        if (outcome.result.rejected.length) setWarning('Algunos valores propuestos no superaron la validación. Revisa los campos antes de guardar.');
+      } else {
+        await checkpoint(outcome.conversation);
+        setError('No se pudo interpretar la entrada. Se conservó para reintentar o revisar manualmente.');
       }
-    },
-    [handle]
-  );
-
+      return outcome.status === 'ok';
+    } catch {
+      setError('No se pudo completar el turno o guardar sus cambios. Conserva esta pantalla y reintenta.');
+      return false;
+    } finally { lock.current = false; setBusy(false); }
+  }
+  const deps = { runtime, now, language: 'es' as const, checkpoint };
   return {
-    conversation,
-    runtimePhase,
-    runtimeError,
-    busy,
-    error,
-    prepare,
-    sendText: useCallback(
-      (text: string) => run(() => submitText(conversation, text, deps)),
-      [conversation, deps, run]
-    ),
-    sendPhoto: useCallback(
-      (path: string) => run(() => submitPhoto(conversation, path, deps)),
-      [conversation, deps, run]
-    ),
-    sendVoice: useCallback(
-      (path: string) => run(() => submitVoice(conversation, path, deps)),
-      [conversation, deps, run]
-    ),
-    /** Whether the camera should stay offered for the field being asked about. */
-    cameraOffered: conversation.pendingField
-      ? acceptsMorePhotos(conversation.pendingField)
-      : true,
+    conversation, runtimePhase, runtimeError, busy: busy || restoring || restoreFailed.current, error, warning, prepare,
+    sendText: (text: string) => run(() => submitText(conversation, text, deps)),
+    sendPhoto: (path: string) => run(() => submitPhoto(conversation, path, deps)),
+    sendVoice: (path: string) => run(() => submitVoice(conversation, path, deps)),
+    retryLast() {
+      const turn = [...conversation.turns].reverse().find(item => item.role === 'user');
+      if (!turn) return Promise.resolve(false);
+      if (turn.source === 'image' && turn.reference) return run(() => submitPhoto(conversation, turn.reference!, deps));
+      if (turn.source === 'voice' && turn.reference) return run(() => submitVoice(conversation, turn.reference!, deps));
+      return run(() => submitText(conversation, turn.text, deps));
+    },
+    markSaved: () => setConversation(state => ({ ...state, status: 'saved' })),
+    async newConversation() {
+      if (lock.current) return;
+      lock.current = true; setBusy(true);
+      try { await checkpoint(startConversation(newId(), userId, now().toISOString())); setError(null); }
+      catch { setError('No se pudo guardar la nueva conversación.'); }
+      finally { lock.current = false; setBusy(false); }
+    },
+    cameraOffered: conversation.pendingField ? acceptsMorePhotos(conversation.pendingField) : true,
   };
 }

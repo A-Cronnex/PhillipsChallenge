@@ -44,6 +44,8 @@ function buildRepositories(options: {
   saved?: Saved[];
 }): Repositories {
   return {
+    catalog: { listEquipment: async () => [], createLocalUser: async () => USER, createSite: async () => SITE.id },
+    conversations: { save: async () => {}, latest: async () => null, finalize: async () => {} },
     sites: { listSites: async () => options.sites ?? [SITE] },
     users: {
       // `'user' in options`, not `??`: an explicit null means "no local user",
@@ -147,8 +149,8 @@ describe('ObservationCaptureForm', () => {
     mockGetRepositories.mockResolvedValue(buildRepositories({ sites: [] }));
     render(<ObservationCaptureForm />);
 
-    await waitFor(() => expect(screen.getByTestId('empty-state')).toBeTruthy());
-    expect(screen.getByText('No hay sitios guardados')).toBeTruthy();
+    await waitFor(() => expect(screen.getByText('Registrar sitio')).toBeTruthy());
+    expect(screen.getByText('No hay sitios guardados. Registra el primero para comenzar.')).toBeTruthy();
   });
 
   it('shows an empty state when the device has no local user', async () => {

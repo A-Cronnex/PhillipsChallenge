@@ -1,3 +1,6 @@
+import { Button } from 'react-native';
+import { SiteCreator } from '../../catalog/ui/SiteCreator';
+import { EquipmentPicker } from '../../catalog/ui/EquipmentPicker';
 import {
   Pressable,
   ScrollView,
@@ -62,10 +65,11 @@ export function ObservationCaptureForm() {
 
   if (capture.sites.length === 0) {
     return (
-      <EmptyState
-        title="No hay sitios guardados"
-        message="Una observación debe pertenecer a un sitio. Descarga o registra al menos un sitio antes de capturar."
-      />
+      <ScrollView contentContainerStyle={{ padding: 24, gap: 16 }}>
+        <Text>No hay sitios guardados. Registra el primero para comenzar.</Text>
+        <Button title="Actualizar sitios" onPress={() => void capture.reload()} />
+        <SiteCreator onCreated={async id => { await capture.reload(); capture.update({ siteId: id }); }} />
+      </ScrollView>
     );
   }
 
@@ -107,11 +111,15 @@ export function ObservationCaptureForm() {
           detail: [site.city, site.country].filter(Boolean).join(', ') || undefined,
         }))}
         selected={capture.values.siteId}
-        onSelect={(siteId) => capture.update({ siteId })}
+        onSelect={(siteId) => capture.update({ siteId, equipmentId: null })}
         error={errors.siteId}
         emptyMessage="No hay sitios disponibles."
         testID="site-picker"
       />
+
+      <SiteCreator onCreated={async id => { await capture.reload(); capture.update({ siteId: id, equipmentId: null }); }} />
+      <EquipmentPicker key={capture.confirmation?.observationId ?? 'draft'} siteId={capture.values.siteId} selected={capture.values.equipmentId ?? null}
+        onSelect={equipmentId => capture.update({ equipmentId })} />
 
       <TextField
         label="Fecha de la visita"

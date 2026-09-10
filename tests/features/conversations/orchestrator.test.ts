@@ -411,3 +411,30 @@ describe('free text stays in the user’s language — docs/tech-stack.md §7.2'
     expect(outcome.result.conversation.fields.modality.source).toBe('voice');
   });
 });
+
+describe('durable input checkpoints', () => {
+  it('persists typed input before calling inference', async () => {
+    const ai = runtime({});
+    const checkpoint = jest.fn(async (state: ConversationState) => {
+      expect(state.turns.at(-1)?.text).toBe('dos equipos');
+      expect(ai.textCalls).toHaveLength(0);
+    });
+    await submitText(conversation(), 'dos equipos', { ...deps(ai), checkpoint });
+    expect(checkpoint).toHaveBeenCalledTimes(1);
+    expect(ai.textCalls[0].targetFields).toEqual(expect.arrayContaining(['siteName', 'quantity', 'brand']));
+  });
+  it('does not infer if preserving the original input fails', async () => {
+    const ai = runtime({});
+    await expect(submitText(conversation(), 'dos', { ...deps(ai), checkpoint: async () => { throw new Error('disk full'); } })).rejects.toThrow('disk full');
+    expect(ai.textCalls).toHaveLength(0);
+  });
+  it('preserves the audio reference even when transcription fails', async () => {
+    const ai = runtime({ transcript: new Error('model unavailable') });
+    const checkpoint = jest.fn(async () => {});
+    const result = await submitVoice(conversation(), '/local/clip.m4a', { ...deps(ai), checkpoint });
+    expect(result.status).toBe('inference_failed');
+    if (result.status !== 'inference_failed') throw new Error('expected failure');
+    expect(result.conversation.turns.at(-1)?.reference).toBe('/local/clip.m4a');
+    expect(checkpoint).toHaveBeenCalledTimes(1);
+  });
+});

@@ -9,7 +9,7 @@ wire contract in `types/sync-contract.ts`.
 
 ## Requirements
 
-- Node.js ≥ 20.17
+- Node.js 24 (same baseline as the mobile workspace)
 - PostgreSQL ≥ 11 (`hashtextextended`, used for the per-entity advisory lock)
 
 ## Setup
@@ -30,10 +30,10 @@ string or credential is committed anywhere in this repository (CLAUDE.md §15).
 
 ## Authentication
 
-**The server refuses every request out of the box.** The authentication
-protocol is an open decision (CLAUDE.md §18), so `createRejectingAuthenticator`
-is the default: an endpoint that accepts hospital data from anyone who can
-reach the port is not a safe thing to ship while the decision is pending.
+**The server refuses every request without configured credentials.** Set
+`SYNC_DEVICE_CREDENTIALS` for the provisioned device-token authenticator; see
+[the integrated client setup below](#integrated-mobile-client-september-2026).
+`createRejectingAuthenticator` remains the fallback when configuration is absent.
 
 To exercise the endpoint locally:
 
@@ -46,14 +46,14 @@ That switches in `createInsecureDevAuthenticator`, which trusts `x-user-id` and
 reach the port can claim to be any user. The process prints a warning on every
 start with it enabled.
 
-When a real protocol is chosen, it becomes one implementation of
-`Authenticator` (`src/http/authentication.ts`) and nothing else changes.
+The mobile client uses the device-token implementation of `Authenticator`;
+corporate authentication can replace that port without changing synchronization.
 
 ## Users
 
 `users` rows are **not** created by synchronization — see `docs/sync-api.md` §6.
-Provisioning them is part of the authentication decision. Until then, insert
-them directly to test:
+Provision the UUID shown by the mobile dashboard through an administrative
+process before granting device credentials. For isolated tests, an example is:
 
 ```sql
 INSERT INTO users (id, name, role) VALUES
@@ -110,3 +110,28 @@ It has been run against PostgreSQL 16.14. What remains unverified is listed in
 npm run typecheck            # this package
 npm run typecheck --prefix .. # the mobile app; also covers the pure server files
 ```
+
+## Integrated mobile client (September 2026)
+
+The MVP now supports provisioned per-device bearer credentials. Configure
+`SYNC_DEVICE_CREDENTIALS` with JSON entries `{ userId, deviceId, tokenSha256 }`
+and provision the matching user in Postgres. The mobile dashboard displays the
+IDs and accepts the token in memory. Details and rotation/revocation steps:
+[Sync API §14](../docs/sync-api.md#14-conexion-operativa-del-mvp).
+
+Normal startup:
+
+```bash
+npm ci --prefix server
+npm run build --prefix server
+# Export DATABASE_URL and SYNC_DEVICE_CREDENTIALS through your deployment's secret configuration.
+npm run migrate --prefix server
+NODE_ENV=production npm start --prefix server
+```
+
+`HOST` defaults to `127.0.0.1`, `PORT` to `8080`. Put the server behind your
+HTTPS reverse proxy. Missing credential configuration still rejects requests;
+malformed credential configuration fails startup. The insecure test authenticator
+cannot start with `NODE_ENV=production` and always binds loopback. No cloud
+service, DNS record, certificate or production database is provisioned by these
+commands.

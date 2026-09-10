@@ -1,16 +1,4 @@
-/**
- * Sync server configuration.
- *
- * Mirrors the shape of services/maps/tile-source.ts, and for the same reason:
- * the default is the mode that needs no infrastructure, so the app is honest
- * about having no backend rather than pointing at a placeholder that fails at
- * runtime.
- *
- * No URL is committed here. Once a deployment exists its address belongs in an
- * environment file read through `app.config.ts` (README §3), never in the
- * repository — and certainly no credentials, which have no representation in
- * this file at all (CLAUDE.md §15).
- */
+/** Optional public server URL. Credentials are entered at runtime and never embedded here. */
 export type SyncServerMode = 'disabled' | 'configured';
 
 export interface SyncServerConfig {
@@ -26,7 +14,8 @@ export interface SyncServerConfig {
  * every queued record `pending`, which is the accurate state for a device that
  * has nowhere to sync to.
  */
-export const syncServerConfig: SyncServerConfig = { mode: 'disabled' };
+const syncUrl = process.env.EXPO_PUBLIC_SYNC_URL?.trim();
+export const syncServerConfig: SyncServerConfig = syncUrl ? { mode: 'configured', baseUrl: syncUrl } : { mode: 'disabled' };
 
 export class InsecureSyncUrlError extends Error {
   constructor(url: string) {
@@ -47,7 +36,7 @@ export class InsecureSyncUrlError extends Error {
  */
 function isLoopback(hostname: string): boolean {
   return (
-    hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1'
+    hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname === '[::1]'
   );
 }
 
@@ -71,7 +60,7 @@ export function resolveSyncEndpointUrl(
   }
 
   const parsed = new URL(config.baseUrl);
-  if (parsed.protocol !== 'https:' && !isLoopback(parsed.hostname)) {
+  if (parsed.username || parsed.password || (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && isLoopback(parsed.hostname)))) {
     throw new InsecureSyncUrlError(config.baseUrl);
   }
 

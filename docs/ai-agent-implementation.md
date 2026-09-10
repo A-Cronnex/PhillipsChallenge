@@ -21,7 +21,7 @@ what was verified, and what cannot be verified without a physical device.
 `@qvac/sdk/expo-plugin`, `expo-audio`, `expo-image-picker` (with Spanish
 permission strings that state the photo never leaves the device).
 
-## 2. Node ≥ 20.17 Is Now Required
+## 2. Node 24 build baseline
 
 `@qvac/sdk/expo-plugin` is ESM-only, and Expo's config-plugin resolver loads
 plugins with `require()`. On Node 18 `npx expo prebuild` fails with:
@@ -32,7 +32,7 @@ Error [ERR_REQUIRE_ESM]: require() of ES Module .../expo/plugins/index.js
 ```
 
 Verified: the same command succeeds on Node 24. `package.json` now declares
-`"engines": { "node": ">=20.17" }`. Use `nvm use 24` before any Expo command.
+`"engines": { "node": ">=24" }`, with `.nvmrc` set to 24. Use `nvm use 24` before any Expo command.
 
 ## 3. Model Identifiers
 
@@ -57,37 +57,41 @@ Three things that cost time to rediscover:
 - TranslatePsy-EuroNano is Bergamot NMT (`docs/tech-stack.md` §7.2), so it
   appears as `BERGAMOT_*` and each direction needs three files.
 
-## 4. What Is NOT Wired Yet
+## 4. Integration completed on September 9, 2026
 
-**The Spanish→English translation bridge is not applied.**
-`docs/tech-stack.md` §7.2 specifies es → MedPsy(en) → es. The Bergamot model
-constants are recorded but `createQvacRuntime` prompts MedPsy directly with the
-user's text. Consequences:
+The es→en working-copy bridge and en→es follow-up translation are now wired.
+Bergamot directions are specified in `loadModel.modelConfig`; `translate()`
+uses `modelType: 'nmtcpp-translation'`, and its `.text` is awaited. MedPsy gets
+both original input and transient English context; the language guard still
+checks values against the original Spanish utterance.
 
-- Extraction quality on Spanish input is unmeasured. It may be fine (MedPsy has
-  seen Spanish) or poor — that is a device measurement, not a guess.
-- Nothing is corrupted by this: the **storage** half of §7.2 is enforced
-  independently of the bridge — see §8.4 below. Free-text values are checked
-  against the user's own words before they become domain state, so English
-  reaches a field value neither from the bridge nor from MedPsy answering in
-  English on its own.
-- The part that still depends on the bridge is the **follow-up question** shown
-  to the user. It is prompt-enforced only (`languageRules` in
-  `services/ai/prompts.ts` asks for it in the user's language) and cannot be
-  verified offline, because "is this Spanish?" needs a language detector this
-  project does not have. If MedPsy answers in English anyway, the user sees an
-  English question; the app's own Spanish wording (`messageFor`) is used
-  whenever the model produces no follow-up.
+The adapter derives its API type from the installed SDK, replacing the former
+hand-written interface and `as never` casts. This exposed two actual mismatches:
+`completion().text` is a promise, and transcription accepts `audioChunk`, not
+`path`. Vision now loads `projectionModelSrc` with the main model. File URIs are
+converted to absolute filesystem paths before inference.
 
-Wiring it means calling `translate({ modelId, text, from:'es', to:'en' })`
-before the completion and again in reverse for the follow-up question. Deferred
-because it doubles the loaded-model count, and whether it is needed at all
-should be decided by measuring Spanish extraction on a device first (§6).
+Registry descriptors trigger first-use downloads and reuse local model storage.
+They do not bundle the model weights in the APK. Text loads at preparation;
+translation, speech and vision load on demand. First use of every modality must
+happen online before field work. Quality, latency and memory remain device checks.
 
-**Also not implemented:** persisting a conversation to the `conversations`
-table, converting a completed conversation into an `Observation`, and voice
-recording (`expo-audio` is installed and `transcribe()` is wired, but no
-recorder UI exists — the agent accepts text and photos today).
+Voice recording is connected through expo-audio. Camera/audio cache files are
+copied to private document storage before saving references. The orchestrator
+checkpoints inputs before inference, including audio before transcription.
+`conversation_drafts` holds local JSON snapshots; the latest conversation is
+restored after restart. Snapshots/raw media are not uploaded by the sync protocol.
+
+The review screen permits editing values and confidence, selecting or creating a
+site, and selecting an existing equipment record or creating a new one. Explicit
+confirmation validates the observation and commits equipment, conversation,
+observation, attribute confidence, sources and synchronization rows atomically.
+Repeated confirmation of the same conversation does not duplicate observations.
+Corrected fields become user-reported text; unchanged fields retain provenance.
+Original turns plus a final review turn preserve the audit trail.
+
+See [implementation-status.md](implementation-status.md) and the
+[Android installation guide](android-installation.md) for the complete integration.
 
 ## 5. Layering
 
@@ -134,7 +138,7 @@ adjusting after real use.
 - **`expo-image-picker`** for photo capture. `docs/ai-agent.md` §3a requires
   photos but no document names a camera package. First-party Expo, covers both
   camera and library.
-- **`expo-audio`** for future voice recording, chosen for the same reason.
+- **`expo-audio`** for voice recording, chosen for the same reason.
 - **Dependency-version drift**: `docs/tech-stack.md` §6 pins
   `react-native-bare-kit@^0.11.5` and `bare-pack@^1.5.1`. The current
   `@qvac/sdk` peer range is `*` for bare-kit and it depends on `bare-pack@^2`.
@@ -179,20 +183,15 @@ it understood the contract and hallucinated inside it, and "Panama City" for
 "Ciudad de Panamá" means it did its job and translated.
 
 Each stage drops what it refuses and reports it; `TurnResult.rejected` is the
-concatenation of all three. **Known limitation:** `useConversation` does not
-render `rejected` yet, so those reports currently reach no one — the values are
-not silently *persisted*, but they are silently *not shown*.
+concatenation of all three. `useConversation` now renders a validation notice when values were rejected;
+the user can inspect and correct the proposal in the review screen.
 
-Still not implemented from §8:
-
-- **Duplicate detection.** It needs repository queries and a matching rule
-  (same site + brand + model + modality? within what time window?) that no
-  document defines. `docs/architecture.md` §4 places it in the domain layer;
-  nothing is there yet.
-- **Required fields** are tracked per conversation (`missingRequiredFields`)
-  but a conversation is not yet converted into an observation, so
-  `validateObservationDraft` — which enforces them for persistence — never runs
-  on an agent-captured record.
+Persistence reuses `validateObservationDraft`. Duplicate detection rejects a new
+equipment record with the same site, brand, model and modality, using trimmed,
+case-insensitive SQLite comparison, and asks the user to select the existing
+record. This is a conservative MVP matching rule, not fuzzy asset reconciliation.
+Site creation similarly checks name + city + country. Neither rule merges data
+silently. SQLite's built-in `lower` does not implement full Unicode folding.
 
 ### 8.2 Proposed rules introduced here
 
@@ -221,10 +220,9 @@ end up rated differently. Fields with no confidence attribute in
 `docs/domain-model.md` §7 — quantity, site name, city, country, years of use,
 notes — produce no row and do not affect the overall value.
 
-§9's other half, "the agent must ask the user about confidence when required by
-the business workflow", is **not** implemented for the agent path: the manual
-form has `ConfidenceSelector`, the conversation has no equivalent turn. Which
-workflow requires it is not defined anywhere.
+The final review exposes the same `ConfidenceSelector` as manual capture.
+The user can amend confidence before confirmation. A separate business workflow
+that requires asking a confidence question on every agent turn is not defined.
 
 ### 8.4 Free Text Stays in the User's Language (§7.2)
 
@@ -275,111 +273,34 @@ Limits worth knowing:
   "monitores" is accepted, and stores "monitor". That is the user's own word,
   truncated, not a translation.
 
-## 9. Tests
+## 9. Verification
 
-`npm test` — 241 tests across 19 suites, all passing. For the agent:
+The current counts and commands are in [implementation-status.md](implementation-status.md).
+Tests cover extraction, language preservation, confidence, vision flow, input
+checkpoints, review validation, source preservation and SDK request/response
+shapes. The SQLite integration test exercises actual migrations and repositories,
+rollback, recovery and idempotent finalization.
 
-- `tests/features/conversations/vision-flow.test.ts` (13) — each §3a rule,
-  named after the rule it protects.
-- `tests/features/conversations/extraction.test.ts` (16) — invented fields,
-  invalid statuses and confidences, non-primitive values, NaN, partial
-  salvage, the unknown-value rule.
-- `tests/features/conversations/orchestrator.test.ts` (20) — the full §3a
-  sequence against a scripted runtime: photo → re-request → voice suggestion;
-  mixed image/voice capture in one conversation; inference failure preserving
-  the conversation; unusable output fabricating nothing; and the §8/§9/§7.2
-  rules end to end (out-of-range year not recorded, `"5"` recorded as 5,
-  estimated+high capped, an English note replaced by the user's Spanish
-  sentence, a translated city dropped).
-- `tests/features/conversations/value-rules.test.ts` (18) — §8 numeric ranges,
-  geographic values, text limits, numeric-string coercion.
-- `tests/features/conversations/language.test.ts` (13) — §7.2: accent-folded
-  matching, the user's spelling restored, the notes fallback, the direct-answer
-  fallback, brand/model and photo values left alone.
-- `tests/features/conversations/confidence.test.ts` (10) — §9: per-attribute
-  rows, the field→attribute mapping, source preservation, the status cap, and
-  the overall rule shared with manual capture.
+SDK tests substitute its native implementation. They do not demonstrate model
+quality or prove that a particular device has sufficient memory.
 
-**What these do not prove:** that a real model returns anything resembling
-these shapes. Every test substitutes a fake `AiRuntime`. QVAC cannot run under
-Jest or on an emulator (`docs/ai-agent.md` §12). In particular, no test proves
-that MedPsy honours the verbatim-value instruction — the domain guard exists
-precisely because that cannot be assumed — and none proves that a follow-up
-question actually comes back in Spanish.
+## 10. Physical-device acceptance checklist
 
-## 10. Device Testing Checklist
+None of these checks has been executed in this session: ADB detected no phone.
+Use [android-installation.md](android-installation.md) to install the app.
 
-Everything below needs a **physical device**. Nothing in this list has been
-executed. Prerequisites: Node ≥20.17 (`nvm use 24`), then
-
-```bash
-npx expo prebuild
-npx expo run:android    # or run:ios
-```
-
-### 10.1 Blocking — the SDK contract
-
-These are the assumptions most likely to be wrong, because CLAUDE.md §18 lists
-the exact QVAC API as unresolved and `services/ai/qvac-runtime.ts` was written
-against type definitions, never executed.
-
-1. **Models load at all.** Open the *Agente* tab, press "Cargar modelos".
-   Expected: it reaches "ready". If it fails, the message on screen is the
-   real error — that tells us whether `loadModel({ modelSrc })` takes a
-   registry descriptor the way the adapter assumes.
-2. **Model distribution.** Watch whether first load downloads weights or fails
-   for missing files. This settles the open question in `docs/ai-agent.md` §12
-   (bundled vs. downloaded on first run) with an observation instead of a guess.
-3. **`completion()` response shape.** The adapter reads `response.text`. If
-   nothing is extracted but no error appears, this is the first suspect.
-4. **Image attachments.** Take a photo of an equipment nameplate. The adapter
-   passes `attachments: [{ path }]` with the `expo-image-picker` URI. Two things
-   can break: VisionPsy may need the mmproj projector loaded explicitly
-   alongside the model, and the picker returns a `file://` URI which QVAC may
-   or may not accept as a path.
-
-### 10.2 The §3a flow, end to end
-
-5. Photo of a nameplate where the **brand is legible** → brand captured,
-   marked as coming from the image.
-6. Photo where the **brand is not legible** → agent asks for another photo of
-   the nameplate.
-7. A second unusable photo → agent suggests voice **and** the camera button is
-   still offered (rule 2).
-8. Answer by text after the voice suggestion → the field is captured and the
-   agent moves on to the next missing field, without re-asking anything already
-   captured (rule 3).
-9. Mixed session: brand from a photo, quantity and site by typing → both
-   recorded with the right `source`, in one conversation (rule 4).
-
-### 10.3 Quality questions only a device can answer
-
-10. **Spanish extraction without the translation bridge** (§4). Speak/type in
-    Spanish and judge whether MedPsy extracts correctly. This decides whether
-    the Bergamot es↔en bridge is needed or is avoidable complexity.
-11. **VisionPsy on Spanish-language nameplates.** `docs/tech-stack.md` §7.2
-    flags this as unverified.
-12. **Latency.** First-token time for a photo, on the target phone. §6 of
-    tech-stack picked the Flash variant for sub-second first token — confirm.
-13. **Memory.** MedPsy-1.7B and VisionPsy loaded together, plus MapLibre. If
-    they do not coexist, the runtime needs to unload one before loading the
-    other (`unloadModel` is available).
-14. **`visionReadable` field mapping** (§6). Does asking for a photo of the
-    modality actually work, or should it be voice-only?
-15. **How often the language guard fires** (§8.4). If MedPsy honours the
-    verbatim instruction, `free_text_not_in_user_language` should be rare. If
-    it fires constantly on real Spanish input, that is the measurement that
-    justifies wiring the Bergamot bridge (§4) — and it also means users are
-    being re-asked for fields they already answered, which is the one way this
-    guard can hurt the capture flow.
-
-### 10.4 Non-AI items also pending a device
-
-15. MapLibre rendering, tap hit-testing on site circles, and the site→equipment
-    detail panel (`docs/maps.md` §11).
-16. `expo-sqlite` opening the real database, and specifically that
-    `PRAGMA foreign_keys = ON` takes effect — if it does not, every foreign key
-    silently stops being enforced.
-17. Offline region download (`docs/maps.md` §5) — only testable once a
-    self-hosted style URL exists; with no basemap configured the code correctly
-    refuses to start a download.
+- [ ] First-use model download completes; later cached loads work without Internet.
+- [ ] MedPsy extracts numbers and identifiers from real field descriptions.
+- [ ] Bergamot translates both directions and follow-ups remain Spanish.
+- [ ] VisionPsy + projector accepts the retained camera file and reads a nameplate.
+- [ ] Poor image → one photo re-request per field → voice suggestion; camera remains available.
+- [ ] Voice permissions, recording, stopping and transcription work; backgrounding stops recording.
+- [ ] Audio failure preserves the file and allows retry of the last entry after restart.
+- [ ] Mixed text/image/voice capture retains each attribute's source and confidence.
+- [ ] Review corrections persist; existing equipment receives a new historical observation.
+- [ ] Reopening the app restores the last conversation; re-confirming does not duplicate it.
+- [ ] Measure model load/inference latency and peak RAM alongside MapLibre.
+- [ ] Validate text, photos and voice in airplane mode using an autonomous APK.
+- [ ] Validate expo-sqlite foreign keys, persistence and transaction rollback on Android.
+- [ ] Validate MapLibre rendering, site taps and offline region download with self-hosted resources.
+- [ ] Test configured HTTPS synchronization, expired/revoked credentials and retry after connection loss.

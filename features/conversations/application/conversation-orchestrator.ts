@@ -57,6 +57,7 @@ export interface OrchestratorDeps {
   runtime: AiRuntime;
   now: () => Date;
   language: UserLanguage;
+  checkpoint?: (state: ConversationState) => Promise<void>;
 }
 
 /** Wording for each action. Spanish is the confirmed scope (tech-stack §7.2). */
@@ -212,6 +213,7 @@ export async function submitPhoto(
     at: deps.now().toISOString(),
   });
 
+  await deps.checkpoint?.(withTurn);
   return runExtraction(withTurn, 'image', deps, () =>
     deps.runtime.extractFromImage({
       imagePath,
@@ -235,6 +237,7 @@ export async function submitText(
     at: deps.now().toISOString(),
   });
 
+  await deps.checkpoint?.(withTurn);
   return runExtraction(withTurn, 'text', deps, () =>
     deps.runtime.extractFromText({
       text,
@@ -255,13 +258,16 @@ export async function submitVoice(
   audioPath: string,
   deps: OrchestratorDeps
 ): Promise<TurnOutcome> {
+  const pendingVoice = addTurn(conversation, { role: 'user', text: '[audio pendiente de transcripción]',
+    source: 'voice', reference: audioPath, at: deps.now().toISOString() });
+  await deps.checkpoint?.(pendingVoice);
   let transcript: string;
   try {
     transcript = await deps.runtime.transcribe(audioPath);
   } catch (error) {
     return {
       status: 'inference_failed',
-      conversation: { ...conversation, lastError: describe(error) },
+      conversation: { ...pendingVoice, lastError: describe(error) },
       reason: describe(error),
     };
   }
@@ -275,6 +281,7 @@ export async function submitVoice(
     at: deps.now().toISOString(),
   });
 
+  await deps.checkpoint?.(withTurn);
   return runExtraction(withTurn, 'voice', deps, () =>
     deps.runtime.extractFromText({
       text: transcript,
@@ -287,5 +294,5 @@ export async function submitVoice(
 function pendingTargets(conversation: ConversationState): CaptureField[] {
   const pending = conversation.pendingField;
   if (pending && !isKnown(conversation.fields[pending])) return [pending];
-  return visionTargetsFor(conversation);
+  return Object.values(conversation.fields).filter(state => !isKnown(state)).map(state => state.field);
 }

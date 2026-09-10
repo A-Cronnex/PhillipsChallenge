@@ -18,6 +18,7 @@ import type {
 
 export interface ObservationFormValues {
   siteId: string | null;
+  equipmentId?: string | null;
   visitDate: string;
   quantity: string;
   brand: string;
@@ -63,9 +64,8 @@ function orNull(raw: string): string | null {
 export function toDraft(values: ObservationFormValues): ObservationDraft {
   return {
     siteId: values.siteId,
-    // Manual capture never links equipment; duplicate detection does that
-    // later (docs/domain-model.md §5).
-    equipmentId: null,
+    // The user explicitly selects an existing item; null requests a new equipment record.
+    equipmentId: values.equipmentId ?? null,
     visitDate: orNull(values.visitDate),
     quantity: parseNumber(values.quantity),
     brand: orNull(values.brand),

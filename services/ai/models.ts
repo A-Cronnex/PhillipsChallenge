@@ -63,10 +63,5 @@ export const MODEL_REGISTRY_NAMES = {
 
 export type ModelRole = keyof typeof MODEL_REGISTRY_NAMES;
 
-/**
- * Model distribution is an open decision (docs/ai-agent.md §12): bundled with
- * the build versus downloaded on first run. Nothing here assumes either — the
- * runtime asks QVAC to load by registry name and lets the SDK resolve where
- * the weights come from.
- */
-export const MODEL_DISTRIBUTION_DECIDED = false;
+/** Registry descriptors download weights on first load and reuse QVAC's local cache. */
+export const MODEL_DISTRIBUTION_DECIDED = true;

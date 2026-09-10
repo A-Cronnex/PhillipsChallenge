@@ -1,16 +1,4 @@
-/**
- * The authentication seam.
- *
- * The authentication protocol is explicitly unresolved (CLAUDE.md §18,
- * docs/tech-stack.md §9), so this file defines the shape of the decision
- * without making it. `/v1/sync` cannot be served without an `Authenticator`,
- * and the default one rejects everything — an endpoint that accepts hospital
- * data from anyone who can reach the port is not a safe default to ship while
- * the decision is pending.
- *
- * Whatever protocol is chosen (bearer tokens, mTLS, OIDC) becomes an
- * implementation of `Authenticator`; nothing else on the server changes.
- */
+/** Authentication port. The default rejects requests without configured device credentials. */
 import type { Principal } from '../validation/validate-change';
 
 export type AuthenticationResult =
@@ -35,9 +23,8 @@ export function createRejectingAuthenticator(): Authenticator {
       return {
         authenticated: false,
         reason:
-          'No authentication protocol is configured. The protocol is an open ' +
-          'decision (CLAUDE.md §18); the sync endpoint refuses all requests ' +
-          'until an Authenticator is supplied.',
+          'No device credentials are configured. Configure SYNC_DEVICE_CREDENTIALS ' +
+          'before using the sync endpoint.',
       };
     },
   };

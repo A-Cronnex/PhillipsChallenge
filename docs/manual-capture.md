@@ -117,15 +117,14 @@ must not interfere with capture (`CLAUDE.md` §13).
 - **The overall-confidence rule is proposed** (§5 above).
 - **`operational_status` is a free-text field.** Its vocabulary is not defined
   anywhere, so there is neither a CHECK constraint nor a picker.
-- **Equipment is never linked.** `equipment_id` is always null from this
-  screen; duplicate detection and linking are not implemented.
-- **Current user is an interim implementation.** With authentication undecided
-  (`CLAUDE.md` §18), `createUserRepository` returns the earliest-created local
-  user and the screen shows an empty state when there is none. Nothing creates
-  a user yet, so the screen is unusable on a fresh install until a user row
-  exists.
-- **Sites are read-only here.** Creating a site is a separate feature; with no
-  sites stored the screen shows an empty state.
+- **Equipment linking is explicit.** Select an existing record or create a new
+  equipment/group with the first observation. New duplicates matching site +
+  brand + model + modality are rejected; select the existing equipment instead.
+- **First-run identity is local.** `LocalUserGate` creates one named `field_user`
+  for attribution. Server access uses the provisioned device token described in
+  [sync-api.md §14](sync-api.md#14-conexion-operativa-del-mvp).
+- **Sites can be created offline.** The form offers `SiteCreator`, including
+  optional coordinates, duplicate checking and an atomic pending sync record.
 - **No editing or listing of saved observations.** Capture only.
 - **The other three sections** (Dashboard, Map, Conversations) are not declared
   in the tab layout, so the tab bar does not advertise screens that do not

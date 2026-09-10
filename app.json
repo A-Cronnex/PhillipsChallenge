@@ -11,7 +11,8 @@
       "bundleIdentifier": "com.hei.app"
     },
     "android": {
-      "package": "com.hei.app"
+      "package": "com.hei.app",
+      "allowBackup": false
     },
     "plugins": [
       "expo-router",
@@ -26,12 +27,19 @@
         }
       ],
       "@qvac/sdk/expo-plugin",
-      "expo-audio",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Permite grabar tu descripción del equipo para transcribirla en este dispositivo.",
+          "enableBackgroundRecording": false,
+          "enableBackgroundPlayback": false
+        }
+      ],
       [
         "expo-image-picker",
         {
-          "photosPermission": "La aplicaci\u00f3n usa tus fotos para leer la placa del equipo en el dispositivo, sin enviarlas a ning\u00fan servidor.",
-          "cameraPermission": "La aplicaci\u00f3n usa la c\u00e1mara para fotografiar la placa del equipo. El an\u00e1lisis ocurre en el dispositivo."
+          "photosPermission": "La aplicación usa tus fotos para leer la placa del equipo en el dispositivo, sin enviarlas a ningún servidor.",
+          "cameraPermission": "La aplicación usa la cámara para fotografiar la placa del equipo. El análisis ocurre en el dispositivo."
         }
       ]
     ]

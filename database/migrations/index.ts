@@ -1,5 +1,6 @@
 import type { Migration } from '../migrator';
 import { migration001 } from './001-initial-schema';
+import { migration003 } from './003-conversation-drafts';
 import { migration002 } from './002-local-settings';
 
 /**
@@ -10,6 +11,6 @@ import { migration002 } from './002-local-settings';
  * different schemas both reporting the same `user_version`. Change the
  * schema by adding a new migration instead.
  */
-export const migrations: Migration[] = [migration001, migration002];
+export const migrations: Migration[] = [migration001, migration002, migration003];
 
 export { migration001, migration002 };

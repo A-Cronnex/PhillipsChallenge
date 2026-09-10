@@ -88,7 +88,8 @@ export function validateObservationDraft(
     issues.push({ field: 'visitDate', code: 'visit_date_required' });
   } else if (!ISO_DATE.test(draft.visitDate!)) {
     issues.push({ field: 'visitDate', code: 'visit_date_malformed' });
-  } else if (Number.isNaN(Date.parse(`${draft.visitDate}T00:00:00Z`))) {
+  } else if (Number.isNaN(Date.parse(`${draft.visitDate}T00:00:00Z`)) ||
+    new Date(`${draft.visitDate}T00:00:00Z`).toISOString().slice(0, 10) !== draft.visitDate) {
     issues.push({ field: 'visitDate', code: 'visit_date_malformed' });
   } else if (draft.visitDate! > today) {
     // A visit cannot have happened in the future. Lexicographic comparison is

@@ -47,4 +47,6 @@ export interface AiRuntime {
 /** Persistence of the conversation itself (docs/domain-model.md §10). */
 export interface ConversationRepository {
   save(conversation: ConversationState): Promise<void>;
+  latest(userId: string): Promise<ConversationState | null>;
+  finalize(conversation: ConversationState, observation: import('../../observations/domain/observation').NewObservation): Promise<void>;
 }

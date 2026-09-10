@@ -25,8 +25,8 @@ export async function getAiRuntime(): Promise<AiRuntime> {
   ]);
 
   runtime = createQvacRuntime({
-    api: sdk as never,
-    catalog: registry as never,
+    api: sdk,
+    catalog: registry,
   });
   return runtime;
 }

@@ -1,3 +1,7 @@
+import { Button } from 'react-native';
+import { ConversationReview } from './ConversationReview';
+import { VoiceRecorder } from './VoiceRecorder';
+import { retainArtifact } from '../../../services/capture/artifacts';
 import * as ImagePicker from 'expo-image-picker';
 import { useState } from 'react';
 import {
@@ -32,6 +36,16 @@ interface ConversationScreenProps {
 export function ConversationScreen({ runtime, userId }: ConversationScreenProps) {
   const chat = useConversation({ runtime, userId });
   const [draft, setDraft] = useState('');
+  const [reviewing, setReviewing] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [mediaError, setMediaError] = useState('');
+  if (reviewing) return <ConversationReview conversation={chat.conversation}
+    onSaved={() => { chat.markSaved(); setReviewing(false); }} onCancel={() => setReviewing(false)} />;
+  if (chat.conversation.status === 'saved') return <View style={styles.centered}>
+    <Text style={styles.title}>Observación guardada en este dispositivo</Text>
+    <Text>Pendiente de sincronización. Puedes consultarla en el tablero y el mapa.</Text>
+    <Button title="Nueva conversación" disabled={chat.busy || recording} onPress={() => void chat.newConversation()} />
+  </View>;
 
   if (chat.runtimePhase === 'idle') {
     return (
@@ -40,8 +54,10 @@ export function ConversationScreen({ runtime, userId }: ConversationScreenProps)
         <Text style={styles.body}>
           Los modelos se ejecutan en este dispositivo: {MODEL_LABELS.text} para
           el texto y {MODEL_LABELS.vision} para las fotos. La primera carga
-          puede tardar.
+          requiere conexión para descargar los modelos y espacio libre. Después de descargarlos podrás usarlos sin conexión.
         </Text>
+        {chat.error ? <Text accessibilityRole="alert">{chat.error}</Text> : null}
+        {chat.conversation.turns.length ? <Button title="Revisar conversación recuperada" disabled={chat.busy || recording} onPress={() => setReviewing(true)} /> : null}
         <Pressable
           onPress={() => void chat.prepare()}
           style={styles.primaryButton}
@@ -68,7 +84,7 @@ export function ConversationScreen({ runtime, userId }: ConversationScreenProps)
 
   if (chat.runtimePhase === 'unavailable') {
     return (
-      <ErrorState
+      <View style={{ flex: 1 }}><ErrorState
         title="No se pudieron cargar los modelos"
         message={
           chat.runtimeError ??
@@ -76,25 +92,27 @@ export function ConversationScreen({ runtime, userId }: ConversationScreenProps)
         }
         onRetry={() => void chat.prepare()}
       />
+      {chat.conversation.turns.length ? <Button title="Revisar sin inferencia" disabled={chat.busy} onPress={() => setReviewing(true)} /> : null}
+      </View>
     );
   }
 
   async function takePhoto() {
-    const permission = await ImagePicker.requestCameraPermissionsAsync();
-    if (!permission.granted) return;
-
-    const result = await ImagePicker.launchCameraAsync({ quality: 0.7 });
-    // The image stays on the device; only its local path is passed along.
-    if (!result.canceled && result.assets[0]?.uri) {
-      void chat.sendPhoto(result.assets[0].uri);
-    }
+    setMediaError('');
+    try {
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (!permission.granted) { setMediaError('Permite la cámara en Ajustes para tomar una foto.'); return; }
+      const result = await ImagePicker.launchCameraAsync({ quality: 0.7 });
+      if (!result.canceled && result.assets[0]?.uri) {
+        await chat.sendPhoto(retainArtifact(result.assets[0].uri, 'image'));
+      }
+    } catch { setMediaError('No se pudo conservar la foto. Inténtalo de nuevo.'); }
   }
 
   function send() {
     const text = draft.trim();
-    if (text.length === 0) return;
-    setDraft('');
-    void chat.sendText(text);
+    if (!text) return;
+    void chat.sendText(text).then(ok => { if (ok) setDraft(''); });
   }
 
   return (
@@ -123,9 +141,8 @@ export function ConversationScreen({ runtime, userId }: ConversationScreenProps)
           <View style={styles.errorBanner} accessibilityLiveRegion="polite" testID="turn-error">
             <Text style={styles.errorTitle}>No se pudo procesar</Text>
             <Text style={styles.turnText}>{chat.error}</Text>
-            <Text style={styles.turnText}>
-              Tu entrada se conservó. Puedes intentarlo de nuevo.
-            </Text>
+            <Text style={styles.turnText}>Tu entrada se conservó.</Text>
+            <Button title="Reintentar última entrada" disabled={chat.busy || recording} onPress={() => void chat.retryLast()} />
           </View>
         ) : null}
       </ScrollView>
@@ -153,6 +170,10 @@ export function ConversationScreen({ runtime, userId }: ConversationScreenProps)
         </View>
       </View>
 
+      {mediaError ? <Text accessibilityRole="alert">{mediaError}</Text> : null}
+      {chat.warning ? <Text accessibilityLiveRegion="polite">{chat.warning}</Text> : null}
+      <Button title="Revisar y guardar" disabled={chat.busy || recording || !chat.conversation.turns.length} onPress={() => setReviewing(true)} />
+      <VoiceRecorder disabled={chat.busy} onRecorded={chat.sendVoice} onRecordingChange={setRecording} />
       <View style={styles.composer}>
         <TextInput
           style={styles.input}
@@ -160,14 +181,14 @@ export function ConversationScreen({ runtime, userId }: ConversationScreenProps)
           onChangeText={setDraft}
           placeholder="Escribe tu respuesta…"
           placeholderTextColor={colors.outline}
-          editable={!chat.busy}
+          editable={!chat.busy && !recording}
           accessibilityLabel="Mensaje para el agente"
           testID="composer-input"
         />
         {chat.cameraOffered ? (
           <Pressable
             onPress={() => void takePhoto()}
-            disabled={chat.busy}
+            disabled={chat.busy || recording}
             style={styles.iconButton}
             accessibilityRole="button"
             accessibilityLabel="Tomar una foto"
@@ -178,7 +199,7 @@ export function ConversationScreen({ runtime, userId }: ConversationScreenProps)
         ) : null}
         <Pressable
           onPress={send}
-          disabled={chat.busy || draft.trim().length === 0}
+          disabled={chat.busy || recording || draft.trim().length === 0}
           style={[
             styles.iconButton,
             (chat.busy || draft.trim().length === 0) && styles.iconButtonDisabled,

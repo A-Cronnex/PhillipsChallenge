@@ -1,3 +1,4 @@
+import { SyncPanel } from '../../synchronization/ui/SyncPanel';
 import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { EmptyState, ErrorState, LoadingState } from '../../../components/ui/ScreenStates';
@@ -56,10 +57,10 @@ export function DashboardScreen() {
 
   if (metrics.totals.observations === 0) {
     return (
-      <EmptyState
+      <View style={{ flex: 1 }}><SyncPanel onComplete={dashboard.reload} /><EmptyState
         title="Todavía no hay observaciones"
         message="Registra una observación en Captura o con el Agente y las métricas aparecerán aquí. El tablero se calcula en el dispositivo, sin conexión."
-      />
+      /></View>
     );
   }
 
@@ -77,6 +78,7 @@ export function DashboardScreen() {
         />
       }
     >
+      <SyncPanel onComplete={dashboard.reload} />
       <Text style={styles.caption} testID="dashboard-scope">
         Calculado en este dispositivo el {computedFor}, a partir de{' '}
         {metrics.totals.observations} observación(es) guardada(s) localmente.

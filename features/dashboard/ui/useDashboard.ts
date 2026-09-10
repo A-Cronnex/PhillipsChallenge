@@ -23,7 +23,7 @@ export function useDashboard(now: () => Date = () => new Date()) {
   const [data, setData] = useState<DashboardData | null>(null);
 
   const load = useCallback(async () => {
-    setPhase('loading');
+    // Keep current data mounted while refreshing (including the last sync report).
     setError(null);
     try {
       const repositories = await getRepositories();

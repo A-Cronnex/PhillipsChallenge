@@ -338,3 +338,13 @@ Two things it deliberately is **not**:
 - **Not a place for secrets.** The table is unencrypted like the rest of the
   database. The device id is a random UUID identifying an installation to the
   sync server — not a credential (`CLAUDE.md` §15).
+
+## Integration update (September 2026)
+
+Migration 003 adds `conversation_drafts(conversation_id, state_json)` for local
+recovery of agent state and original turns. This table is not synchronized.
+New catalog and conversation repositories use exclusive transactions; confirming
+a review commits all associated business records and sync rows together. Media
+references point to private document storage, not temporary picker/recorder cache.
+See [implementation-status.md](implementation-status.md) for the complete audit
+and the SQLite integration check.

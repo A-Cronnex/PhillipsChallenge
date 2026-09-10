@@ -269,7 +269,8 @@ Do not invent final decisions for:
 
 - Exact QVAC APIs and model versions.
 - Exact local database library.
-- Authentication protocol.
+- Corporate identity integration / SSO. The MVP device-token protocol is
+  implemented and documented in `docs/sync-api.md` §14.
 - Bluetooth protocol.
 - Production deployment configuration.
 - Data retention policy.

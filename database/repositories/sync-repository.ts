@@ -298,7 +298,8 @@ export function createSyncRepository(
           `SELECT id, entity_type, entity_id, operation, local_version, server_version
              FROM sync_records
             WHERE sync_status IN ('pending', 'failed')
-            ORDER BY created_at ASC, id ASC
+            ORDER BY CASE entity_type WHEN 'site' THEN 0 WHEN 'equipment' THEN 1 WHEN 'conversation' THEN 2 ELSE 3 END,
+                     created_at ASC, id ASC
             LIMIT ?`,
           [limit]
         );

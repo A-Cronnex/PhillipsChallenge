@@ -89,7 +89,7 @@ describe('DashboardScreen', () => {
     render(<DashboardScreen />);
 
     await waitFor(() => expect(screen.getByTestId('empty-state')).toBeTruthy());
-    expect(screen.getByText(/sin conexión/i)).toBeTruthy();
+    expect(screen.getAllByText(/sin conexión/i).length).toBeGreaterThan(0);
   });
 
   it('renders the totals computed from local observations', async () => {

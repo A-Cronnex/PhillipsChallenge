@@ -108,7 +108,7 @@ describe('claimPendingChanges', () => {
     expect(statements).toEqual([]);
   });
 
-  it('claims pending and failed rows, oldest first', async () => {
+  it('claims parents before children, oldest first within each entity type', async () => {
     // A failed upload must be retryable (docs/offline-sync.md §6), so `failed`
     // rows belong in the queue alongside `pending` ones.
     const { db, statements } = createFakeDb({
@@ -120,7 +120,7 @@ describe('claimPendingChanges', () => {
 
     const select = statements.find((s) => /SELECT[\s\S]*FROM sync_records/i.test(s.sql));
     expect(select?.sql).toMatch(/sync_status IN \('pending', 'failed'\)/);
-    expect(select?.sql).toMatch(/ORDER BY created_at ASC/);
+    expect(select?.sql).toMatch(/ORDER BY CASE entity_type WHEN 'site' THEN 0/);
     expect(select?.params).toContain(50);
   });
 

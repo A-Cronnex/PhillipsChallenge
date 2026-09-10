@@ -284,15 +284,83 @@ device's change *not* being mistaken for a replay.
 
 ## 13. Open Decisions Raised or Left by This Work
 
-1. **Authentication protocol** (already CLAUDE.md §18). The seam exists
-   (`server/src/http/authentication.ts`) and the default rejects everything.
-   Nothing can be deployed until this is decided.
-2. **How a resolved conflict reaches the field user** — see §8.
+1. **Corporate identity integration.** The MVP now has provisioned device
+   bearer credentials (§14). SSO/OIDC and self-service enrollment remain open.
+2. **Durable conflict notifications.** The Tablero shows session counts; a
+   persistent review history for field users remains open.
 3. **The download direction**, and the cursor semantics it needs — see §2.
 4. **Soft-delete / tombstones**, which block both deletes and pull.
-5. **Server-side user provisioning**, which follows from (1).
+5. **Automated user provisioning.** The MVP uses administrative provisioning
+   of the UUID displayed by the local app (§14).
 6. **Transport security beyond TLS** — whether payloads need encryption at rest
    on the server, and whether the local database needs encryption
    (`CLAUDE.md` §18).
 7. **Retention of `sync_conflicts`** — the archive grows without bound; the data
    retention policy is open (`CLAUDE.md` §18).
+
+## 14. Conexion operativa del MVP
+
+Actualización del 9 de septiembre de 2026: el cliente lee
+`EXPO_PUBLIC_SYNC_URL`, y el Tablero permite ejecutar el envío e introducir una
+credencial. El servidor admite `SYNC_DEVICE_CREDENTIALS`. Esto reemplaza la
+indecisión de autenticación mencionada en las secciones históricas anteriores
+para el MVP; una integración corporativa OIDC/SSO sigue siendo trabajo futuro.
+
+### Credencial por instalación
+
+Decisión: bearer aleatorio de al menos 32 bytes generado por un administrador,
+asociado a un UUID de usuario y uno de dispositivo. El cliente envía
+`Authorization: Bearer …` y `x-device-id`. El servidor compara el hash SHA-256
+del token, verifica el dispositivo y deriva el usuario del registro administrado,
+nunca del cuerpo ni de `x-user-id`. Los controles de autoría del endpoint siguen
+aplicándose. La app mantiene el token en memoria, sin guardarlo en SQLite,
+AsyncStorage, archivos, variables públicas ni logs.
+
+Provisionamiento:
+
+1. En Tablero, mostrar los identificadores del usuario local y del dispositivo.
+2. Crear ese mismo UUID de usuario en `users` de Postgres con nombre y rol
+   `field_user`, mediante un procedimiento administrativo autorizado. Los
+   usuarios no se crean aceptando identidades enviadas por `/v1/sync`.
+3. Generar el token en un entorno administrativo seguro, entregar su valor al
+   usuario por un canal seguro y guardar solo el digest en la configuración del
+   servidor. Una forma de generarlo en esa terminal es:
+
+   ```bash
+   node -e 'const c=require("node:crypto"); const t=c.randomBytes(32).toString("base64url"); console.log("Token:",t); console.log("SHA-256:",c.createHash("sha256").update(t).digest("hex"));'
+   ```
+
+4. Configurar `SYNC_DEVICE_CREDENTIALS` como un array JSON de objetos con
+   `userId`, `deviceId` y `tokenSha256` (64 caracteres hexadecimales). No guardar
+   tokens reales ni configuración de usuarios reales en Git. Reiniciar el
+   servidor después de cambiar las credenciales.
+5. Configurar HTTPS delante del servidor. Por defecto escucha en
+   `127.0.0.1`; `HOST` permite cambiarlo según la topología del despliegue.
+6. Introducir el token en Tablero y sincronizar. Retirar su digest y reiniciar
+   el servidor revoca esa credencial. Para rotar, generar un token nuevo.
+
+El modo `SYNC_ALLOW_INSECURE_DEV_AUTH=true` se conserva para los tests antiguos,
+pero solo escucha en loopback y se rechaza con `NODE_ENV=production`.
+No es el modo de acceso de la aplicación integrada.
+
+### Dependencias, auditoría y límites
+
+- Registrar sitio encola `site`. Guardar una primera observación crea `equipment`
+  si se eligió equipo nuevo; seleccionar equipo existente conserva su historial
+  sin sobrescribir la ficha del equipo.
+- Confirmar una conversación escribe conversación, observación, orígenes,
+  confianzas, equipo nuevo si corresponde y cola dentro de una transacción.
+- La cola prioriza sitios → equipos → conversaciones → observaciones **antes**
+  del límite de cada ejecución. Así, un padre no queda detrás de sus hijos al
+  repartir lotes. Si un padre falla, el servidor rechaza referencias no resueltas
+  y el siguiente envío puede reintentarlas.
+- El estado completo de los turnos vive en `conversation_drafts`, una tabla
+  local que no se envía. Las fotos y audios permanecen en el almacenamiento
+  privado de la app. El protocolo no transfiere bytes de esos archivos; sus
+  referencias locales no se pueden abrir desde otro dispositivo.
+- El Tablero muestra cuántos conflictos se resolvieron con la política
+  client-wins. Esa notificación de sesión no es un registro histórico de
+  conflictos para auditoría central.
+- Solo se implementa **push**. No hay lectura del catálogo central, propagación
+  de borrados ni recuperación del dataset desde otro teléfono. Requieren definir
+  alcance por usuario/sitio, cursor y tombstones antes de ampliar el protocolo.

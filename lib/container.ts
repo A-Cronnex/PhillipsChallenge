@@ -1,3 +1,6 @@
+import { getSyncToken } from '../services/sync/session';
+import { createConversationRepository } from '../database/repositories/conversation-repository';
+import type { ConversationRepository } from '../features/conversations/application/ports';
 /**
  * Composition root.
  *
@@ -36,9 +39,13 @@ import type {
 } from '../features/synchronization/application/ports';
 import { createHttpSyncTransport } from '../services/sync/http-transport';
 import { isSyncConfigured } from '../services/sync/config';
+import { createCatalogRepository } from '../database/repositories/catalog-repository';
+import type { CatalogRepository } from '../features/catalog/application/ports';
 import { newId } from './id';
 
 export interface Repositories {
+  catalog: CatalogRepository;
+  conversations: ConversationRepository;
   observations: ObservationRepository;
   sites: SiteRepository;
   users: UserRepository;
@@ -78,6 +85,8 @@ export async function getRepositories(): Promise<Repositories> {
   building = (async () => {
     const db = await openDatabase();
     const built: Repositories = {
+      catalog: createCatalogRepository(db, newId),
+      conversations: createConversationRepository(db, newId),
       observations: createObservationRepository(db, newId),
       sites: createSiteRepository(db),
       users: createUserRepository(db),
@@ -87,7 +96,12 @@ export async function getRepositories(): Promise<Repositories> {
       syncState: createSyncStateRepository(db),
       syncQueue: createSyncRepository(db),
       deviceIdentity: createSettingsRepository(db, newId),
-      syncTransport: isSyncConfigured() ? createHttpSyncTransport() : null,
+      syncTransport: isSyncConfigured() ? createHttpSyncTransport({ authHeaders: async () => {
+        const token = getSyncToken();
+        if (!token) throw new Error('Introduce la credencial de sincronización.');
+        return { authorization: `Bearer ${token}`,
+          'x-device-id': await built.deviceIdentity.getOrCreateDeviceId(new Date().toISOString()) };
+      } }) : null,
     };
     repositories = built;
     return built;
