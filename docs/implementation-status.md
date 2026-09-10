@@ -1,4 +1,15 @@
-# Estado de integración — 9 de septiembre de 2026
+# Estado de integración — actualizado el 10 de septiembre de 2026
+
+La nueva [interfaz de captura](agent-capture-ui.md) añade tema oscuro compartido,
+orb, voz local en vivo, revisión obligatoria de placa y respuestas carácter por
+carácter. La build actual se compiló, instaló y abrió en Pixel 10a; la calidad
+de voz/visión y modo avión autónomo siguen requiriendo pruebas específicas.
+
+Verificación de la interfaz actual: **571 pruebas en 55 suites**, TypeScript
+sin errores, integración SQLite real y build Android ARM64 correctos. En el
+Pixel se comprobó también el composer por encima del teclado.
+
+## Integración base del 9 de septiembre
 
 Se conectó el recorrido local desde una instalación vacía hasta observaciones
 persistidas y enviables al servidor. Se generó y compiló el APK Android de

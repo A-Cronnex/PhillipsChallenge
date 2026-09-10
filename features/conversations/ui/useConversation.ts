@@ -1,20 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getRepositories } from '../../../lib/container';
 import { newId } from '../../../lib/id';
-import { submitPhoto, submitText, submitVoice, type TurnOutcome } from '../application/conversation-orchestrator';
-import type { AiRuntime } from '../application/ports';
+import { submitText, submitVoice, submitVoiceTranscript, submitReviewedPhoto, type TurnOutcome } from '../application/conversation-orchestrator';
+import type { AiRuntime, AgentActivity } from '../application/ports';
+import type { NameplateProposal } from '../application/nameplate-review';
+import type { ExtractedValue } from '../domain/extraction';
 import { addTurn, startConversation, type ConversationState } from '../domain/conversation';
 import { acceptsMorePhotos } from '../domain/vision-flow';
+import { useResponseDelivery } from './useResponseDelivery';
 
 export type RuntimePhase = 'idle' | 'preparing' | 'ready' | 'unavailable';
 export interface UseConversationOptions { runtime: AiRuntime; userId: string; now?: () => Date }
 const clock = () => new Date();
 
 export function useConversation({ runtime, userId, now = clock }: UseConversationOptions) {
+  const response = useResponseDelivery();
   const [runtimePhase, setRuntimePhase] = useState<RuntimePhase>('idle');
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const [conversation, setConversation] = useState(() => startConversation(newId(), userId, now().toISOString()));
   const [busy, setBusy] = useState(false);
+  const [activity, setActivity] = useState<AgentActivity>('idle');
   const [restoring, setRestoring] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
@@ -48,8 +53,8 @@ export function useConversation({ runtime, userId, now = clock }: UseConversatio
   }, [runtime]);
 
   const checkpoint = useCallback(async (state: ConversationState) => {
-    setConversation(state);
     await (await getRepositories()).conversations.save(state);
+    setConversation(state);
   }, []);
   const prepare = useCallback(async () => {
     if (lock.current) return;
@@ -60,14 +65,16 @@ export function useConversation({ runtime, userId, now = clock }: UseConversatio
     finally { lock.current = false; }
   }, [runtime]);
 
-  async function run(action: () => Promise<TurnOutcome>): Promise<boolean> {
+  async function run(action: () => Promise<TurnOutcome>, onCommitted?: () => void): Promise<boolean> {
     if (lock.current || restoring || restoreFailed.current || conversation.status === 'saved') return false;
-    lock.current = true; setBusy(true); setError(null); setWarning(null);
+    lock.current = true; setBusy(true); setActivity('thinking'); setError(null); setWarning(null);
     try {
       const outcome = await action();
       if (outcome.status === 'ok') {
-        const state = addTurn(outcome.result.conversation, { role: 'agent', text: outcome.result.message, source: 'text', at: now().toISOString() });
-        await checkpoint(state);
+        setActivity('responding');
+        const state = addTurn(outcome.result.conversation, { role: 'agent', text: outcome.result.message, source: 'text',
+          at: now().toISOString(), capturedSummary: outcome.result.capturedSummary });
+        await response.reveal(state.turns.length - 1, outcome.result.message, async () => { await checkpoint(state); onCommitted?.(); });
         if (outcome.result.rejected.length) setWarning('Algunos valores propuestos no superaron la validación. Revisa los campos antes de guardar.');
       } else {
         await checkpoint(outcome.conversation);
@@ -77,18 +84,25 @@ export function useConversation({ runtime, userId, now = clock }: UseConversatio
     } catch {
       setError('No se pudo completar el turno o guardar sus cambios. Conserva esta pantalla y reintenta.');
       return false;
-    } finally { lock.current = false; setBusy(false); }
+    } finally { lock.current = false; setBusy(false); setActivity('idle'); }
   }
-  const deps = { runtime, now, language: 'es' as const, checkpoint };
+  const deps = { runtime, now, language: 'es' as const, checkpoint,
+    onResponding: () => setActivity('responding') };
   return {
-    conversation, runtimePhase, runtimeError, busy: busy || restoring || restoreFailed.current, error, warning, prepare,
+    conversation, runtimePhase, runtimeError, activity, delivery: response.delivery, finishDelivery: response.complete,
+    busy: busy || restoring || restoreFailed.current, error, warning, prepare,
     sendText: (text: string) => run(() => submitText(conversation, text, deps)),
-    sendPhoto: (path: string) => run(() => submitPhoto(conversation, path, deps)),
+    acceptPhoto: (proposal: NameplateProposal, edits: ExtractedValue[], onCommitted?: () => void) => run(() => submitReviewedPhoto(conversation, proposal, edits, deps), onCommitted),
+    sendVoiceTranscript: (text: string, path: string) => run(() => submitVoiceTranscript(conversation, text, path, deps)),
+    retainVoiceInput: (path: string) => checkpoint(addTurn(conversation, { role: 'user', source: 'voice',
+      reference: path, text: '[audio pendiente de transcripción]', at: now().toISOString() })),
+    retainPhotoInput: (path: string | null) => checkpoint({ ...conversation, pendingImagePath: path }),
     sendVoice: (path: string) => run(() => submitVoice(conversation, path, deps)),
     retryLast() {
       const turn = [...conversation.turns].reverse().find(item => item.role === 'user');
       if (!turn) return Promise.resolve(false);
-      if (turn.source === 'image' && turn.reference) return run(() => submitPhoto(conversation, turn.reference!, deps));
+      // Photo retries stay in the human review flow; never bypass confirmation.
+      if (turn.source === 'image') return Promise.resolve(false);
       if (turn.source === 'voice' && turn.reference) return run(() => submitVoice(conversation, turn.reference!, deps));
       return run(() => submitText(conversation, turn.text, deps));
     },

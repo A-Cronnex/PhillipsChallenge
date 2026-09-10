@@ -11,6 +11,8 @@ import type { AgentExtraction } from '../../features/conversations/domain/extrac
 import {
   parseExtraction,
   normalizeExtraction,
+  EXTRACTION_JSON_SCHEMA,
+  VISION_EXTRACTION_JSON_SCHEMA,
 } from '../../features/conversations/domain/extraction';
 import {
   extractJsonPayload,
@@ -24,7 +26,7 @@ import { MODEL_REGISTRY_NAMES } from './models';
  *
  * Derived from the installed SDK to catch API drift at compilation, with no native import in Jest.
  */
-export type QvacApi = Pick<typeof import('@qvac/sdk'), 'loadModel' | 'completion' | 'transcribe' | 'translate'>;
+export type QvacApi = Pick<typeof import('@qvac/sdk'), 'loadModel' | 'completion' | 'transcribe' | 'transcribeStream' | 'translate'>;
 
 /** Bare expects filesystem paths; HTTP/content URIs are not local files. */
 export function localFilePath(uri: string): string {
@@ -82,6 +84,8 @@ export function createQvacRuntime(options: QvacRuntimeOptions): AiRuntime {
     const task = options.api.loadModel({ modelSrc: descriptor(name),
       ...(name === MODEL_REGISTRY_NAMES.vision ? { modelConfig: {
         projectionModelSrc: descriptor(MODEL_REGISTRY_NAMES.visionProjector), ctx_size: 2048,
+      } } : name === MODEL_REGISTRY_NAMES.speech ? { modelConfig: {
+        vadModelSrc: descriptor(MODEL_REGISTRY_NAMES.speechVad), audio_format: 's16le', language: 'es', translate: false,
       } } : direction ? { modelConfig: { engine: 'Bergamot', ...direction } } : {}),
     }).then(id => { loaded.set(name, id); return id; });
     loading.set(name, task);
@@ -92,7 +96,9 @@ export function createQvacRuntime(options: QvacRuntimeOptions): AiRuntime {
     name: string,
     role: string,
     prompt: string,
-    imagePath?: string
+    schema: Record<string, unknown>,
+    imagePath?: string,
+    onResponding?: () => void
   ): Promise<AgentExtraction> {
     const id = await modelId(name);
     const response = await options.api.completion({
@@ -104,12 +110,28 @@ export function createQvacRuntime(options: QvacRuntimeOptions): AiRuntime {
           ...(imagePath ? { attachments: [{ path: imagePath }] } : {}),
         },
       ],
-      stream: false,
-      // Constrains the model toward the §7 shape. The output is still
-      // validated afterwards — the model is never trusted (CLAUDE.md §7).
-      responseFormat: { type: 'json_object' },
+      stream: !!onResponding,
+      // Constrains the model to the §7 shape. `json_object` alone only demands
+      // *some* object, and a 1.7B model satisfies that with a bare `{}` — the
+      // schema is compiled to a GBNF grammar by llama.cpp, so `values` cannot
+      // be omitted. The output is still validated afterwards: a grammar fixes
+      // the shape, not the content, and the model is never trusted
+      // (CLAUDE.md §7). This also means MedPsy's native `<think>` channel
+      // never engages here — the grammar constrains sampling from the first
+      // token, before any reasoning tokens could be emitted (see the removal
+      // note on `EXTRACTION_JSON_SCHEMA` in `domain/extraction.ts`).
+      responseFormat: {
+        type: 'json_schema',
+        json_schema: { name: 'equipment_extraction', schema },
+      },
     });
 
+    if (onResponding) {
+      for await (const event of response.events) {
+        if (event.type !== 'contentDelta') continue;
+        onResponding();
+      }
+    }
     const payload = extractJsonPayload(await response.text);
     if (payload === null) throw new UnusableModelOutputError(role);
 
@@ -139,16 +161,11 @@ export function createQvacRuntime(options: QvacRuntimeOptions): AiRuntime {
         const id = await modelId(MODEL_REGISTRY_NAMES.translationEsEn);
         const workingText = await options.api.translate({ modelId: id, text: request.text,
           modelType: 'nmtcpp-translation', stream: false }).text;
-        prompt += '\nEnglish working copy (context only; copy field values from the original input):\n' + workingText
-          + '\nWrite followUpQuestion in English; field values must remain in the original Spanish.';
+        prompt += '\nEnglish working copy (context only; copy field values from the original input):\n' + workingText;
       }
-      const extracted = await complete(MODEL_REGISTRY_NAMES.text, 'text', prompt);
-      if (request.language === 'es' && extracted.followUpQuestion) {
-        const id = await modelId(MODEL_REGISTRY_NAMES.translationEnEs);
-        extracted.followUpQuestion = await options.api.translate({ modelId: id, text: extracted.followUpQuestion,
-          modelType: 'nmtcpp-translation', stream: false }).text;
-      }
-      return extracted;
+      return complete(MODEL_REGISTRY_NAMES.text, 'text', prompt,
+        EXTRACTION_JSON_SCHEMA as unknown as Record<string, unknown>, undefined,
+        request.onResponding);
     },
 
     async extractFromImage(
@@ -157,7 +174,8 @@ export function createQvacRuntime(options: QvacRuntimeOptions): AiRuntime {
       return complete(
         MODEL_REGISTRY_NAMES.vision,
         'vision',
-        imageExtractionPrompt(request.targetFields, request.language),
+        imageExtractionPrompt(request.targetFields),
+        VISION_EXTRACTION_JSON_SCHEMA as unknown as Record<string, unknown>,
         localFilePath(request.imagePath)
       );
     },
@@ -165,6 +183,28 @@ export function createQvacRuntime(options: QvacRuntimeOptions): AiRuntime {
     async transcribe(audioPath: string): Promise<string> {
       const id = await modelId(MODEL_REGISTRY_NAMES.speech);
       return options.api.transcribe({ modelId: id, audioChunk: localFilePath(audioPath) });
+    },
+    async openSpeechSession(onPartial) {
+      const id = await modelId(MODEL_REGISTRY_NAMES.speech);
+      const session = await options.api.transcribeStream({ modelId: id, metadata: true });
+      let cancelled = false;
+      const result = (async () => {
+        const segments: string[] = [];
+        for await (const segment of session) {
+          if (cancelled) break;
+          if (!segment.text || segment.text.trim() === '[BLANK_AUDIO]') continue;
+          if (segment.append || !segments.length) segments.push(segment.text);
+          else segments[segments.length - 1] = segment.text;
+          onPartial(segments.join(' ').replace(/\s+/g, ' ').trim());
+        }
+        return cancelled ? '' : segments.join(' ').replace(/\s+/g, ' ').trim();
+      })();
+      // Attach immediately: a native failure can arrive before stop is pressed.
+      void result.catch(() => {});
+      void session.stats.catch(() => {});
+      return { write: chunk => { if (!cancelled) session.write(chunk); }, result,
+        finish: () => { session.end(); return result; },
+        cancel: () => { cancelled = true; session.destroy(); } };
     },
   };
 }

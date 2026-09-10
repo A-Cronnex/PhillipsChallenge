@@ -234,7 +234,23 @@ TranslatePsy-EuroNano) plus native English input**, not open-ended "any
 language." See `docs/tech-stack.md` §7.2 for the translation pipeline.
 TranslatePsy is a translation-only step around MedPsy, not a
 replacement for it — MedPsy remains the component that performs
-extraction, follow-up-question generation, and confidence scoring.
+extraction and confidence scoring.
+
+Confirmed (2026-09-10): **the model does not generate the follow-up
+question.** The JSON schema in section 7 has no free-text
+`followUpQuestion` field. Early field testing showed MedPsy producing
+incoherent or hallucinated text there whenever the user's turn was not
+a straightforward answer (e.g. the user asking the agent a domain
+question back instead of supplying a value), and that text still had to
+survive a further en→es machine-translation pass, which compounded the
+incoherence. What the agent asks next is now composed entirely by the
+application from domain state — which required fields
+(`features/conversations/domain/fields.ts`) are still unknown — so it is
+deterministic and testable without a model
+(`features/conversations/application/conversation-orchestrator.ts`,
+`messageFor` and `composeMessage`). This is the CLAUDE.md §7 principle
+applied to the question itself, not only to the extracted values: the
+agent proposes, the application decides what is actually said.
 
 Confirmed: **`notes` and other free-text fields are persisted in the
 user's preferred/original language**, not in the English text MedPsy

@@ -64,9 +64,9 @@ export function ConfidenceSelector({
 const styles = StyleSheet.create({
   container: { marginTop: spacing.sm },
   caption: { ...typography.labelMedium, color: colors.onSurfaceVariant },
-  row: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.xs },
+  row: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.xs },
   chip: {
-    minHeight: MIN_TOUCH_TARGET - 8,
+    minHeight: MIN_TOUCH_TARGET,
     justifyContent: 'center',
     paddingHorizontal: spacing.md,
     borderRadius: 20,

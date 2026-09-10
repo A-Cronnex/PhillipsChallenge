@@ -106,6 +106,18 @@ describe('decideNextAction', () => {
       confidence: 'high',
       source: 'voice',
     });
+    state = recordField(state, 'country', {
+      value: 'Panamá',
+      status: 'reported',
+      confidence: 'high',
+      source: 'voice',
+    });
+    state = recordField(state, 'city', {
+      value: 'Ciudad de Panamá',
+      status: 'reported',
+      confidence: 'high',
+      source: 'voice',
+    });
 
     expect(decideNextAction(state, { hadPhoto: true })).toEqual({
       type: 'confirm',

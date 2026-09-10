@@ -15,6 +15,7 @@ import {
   recordVoiceSuggestion,
   withDerivedStatus,
   isKnown,
+  missingRequiredFields,
   type ConversationState,
 } from '../domain/conversation';
 import {
@@ -26,19 +27,29 @@ import {
 import { capConfidenceByStatus } from '../domain/confidence';
 import { preserveUserLanguage } from '../domain/language';
 import { validateExtractedValues } from '../domain/value-rules';
-import { labelOf, type CaptureField } from '../domain/fields';
+import { CAPTURE_FIELDS, labelOf, type CaptureField } from '../domain/fields';
 import {
   decideNextAction,
   visionTargetsFor,
   type NextAction,
 } from '../domain/vision-flow';
 import type { AiRuntime, UserLanguage } from './ports';
+import { validateNameplateEdits, type NameplateProposal } from './nameplate-review';
+import type { ExtractedValue } from '../domain/extraction';
 
 export interface TurnResult {
   conversation: ConversationState;
   action: NextAction;
   /** What the agent says next, in the user's language. */
   message: string;
+  /**
+   * A recap of every field known so far, e.g. "Hasta ahora registré —
+   * la marca: Philips." Null once nothing is known yet. Kept separate from
+   * `message` so the UI can render it as a small indicator above the agent's
+   * bubble rather than as part of what the agent "says" (product requirement,
+   * 2026-09-10).
+   */
+  capturedSummary: string | null;
   /**
    * Everything the application refused to take from the model, or rewrote:
    * schema violations, values outside the business rules (docs/ai-agent.md
@@ -58,6 +69,7 @@ export interface OrchestratorDeps {
   now: () => Date;
   language: UserLanguage;
   checkpoint?: (state: ConversationState) => Promise<void>;
+  onResponding?: () => void;
 }
 
 /** Wording for each action. Spanish is the confirmed scope (tech-stack §7.2). */
@@ -76,6 +88,48 @@ export function messageFor(action: NextAction): string {
     case 'confirm':
       return 'Tengo todo lo necesario. ¿Confirmas que guardo esta observación?';
   }
+}
+
+/**
+ * Recaps every field known so far, so the user can see exactly what the agent
+ * captured from them without having to scroll back through the conversation
+ * (product requirement, 2026-09-10). Built from domain state alone — never
+ * from the model's own words — so it is exact and testable without a model.
+ */
+function summarizeCaptured(conversation: ConversationState): string | null {
+  const known = CAPTURE_FIELDS.filter((field) => isKnown(conversation.fields[field]));
+  if (!known.length) return null;
+  const parts = known.map(
+    (field) => `${labelOf(field)}: ${conversation.fields[field].value}`
+  );
+  return `Hasta ahora registré — ${parts.join('; ')}.`;
+}
+
+/**
+ * Names every still-missing required field, not just the one the next
+ * question targets — city, country and the site name are mandatory
+ * (product requirement, 2026-09-10), and the user should see all of what is
+ * outstanding, not discover it one field at a time.
+ */
+function summarizeMissing(conversation: ConversationState): string | null {
+  const missing = missingRequiredFields(conversation);
+  if (!missing.length) return null;
+  return `Todavía necesito: ${missing.map(labelOf).join(', ')}.`;
+}
+
+/**
+ * Composes what the agent says this turn: a reminder of what is still
+ * missing, then the deterministic question for `action`. Built entirely from
+ * domain state — MedPsy no longer proposes the follow-up text itself; its
+ * questions were free-form model output the application could not validate
+ * before showing it to the user (CLAUDE.md §7), and asking a question outside
+ * what the schema already tracks produced incoherent results (docs/ai-agent.md
+ * §7 no longer has a `followUpQuestion` field; see `extraction.ts`).
+ */
+function composeMessage(conversation: ConversationState, action: NextAction): string {
+  return [summarizeMissing(conversation), messageFor(action)]
+    .filter((part): part is string => part !== null)
+    .join(' ');
 }
 
 /**
@@ -167,7 +221,8 @@ async function runExtraction(
     result: {
       conversation: withDerivedStatus(next),
       action,
-      message: extraction.followUpQuestion ?? messageFor(action),
+      message: composeMessage(next, action),
+      capturedSummary: summarizeCaptured(next),
       rejected: [...parsed.rejected, ...checked.issues, ...guarded.issues],
     },
   };
@@ -243,6 +298,7 @@ export async function submitText(
       text,
       language: deps.language,
       targetFields: targets,
+      onResponding: deps.onResponding,
     })
   );
 }
@@ -258,7 +314,9 @@ export async function submitVoice(
   audioPath: string,
   deps: OrchestratorDeps
 ): Promise<TurnOutcome> {
-  const pendingVoice = addTurn(conversation, { role: 'user', text: '[audio pendiente de transcripción]',
+  const lastVoice = conversation.turns[conversation.turns.length - 1];
+  const pendingVoice = lastVoice?.source === 'voice' && lastVoice.reference === audioPath
+    && lastVoice.text === '[audio pendiente de transcripción]' ? conversation : addTurn(conversation, { role: 'user', text: '[audio pendiente de transcripción]',
     source: 'voice', reference: audioPath, at: deps.now().toISOString() });
   await deps.checkpoint?.(pendingVoice);
   let transcript: string;
@@ -272,27 +330,53 @@ export async function submitVoice(
     };
   }
 
-  const targets = pendingTargets(conversation);
-  const withTurn = addTurn(conversation, {
-    role: 'user',
-    text: transcript,
-    source: 'voice',
-    reference: audioPath,
-    at: deps.now().toISOString(),
-  });
-
-  await deps.checkpoint?.(withTurn);
-  return runExtraction(withTurn, 'voice', deps, () =>
-    deps.runtime.extractFromText({
-      text: transcript,
-      language: deps.language,
-      targetFields: targets,
-    })
-  );
+  return submitVoiceTranscript(pendingVoice, transcript, audioPath, deps);
 }
 
+/** A completed streaming transcript follows the voice path without transcribing twice. */
+export async function submitVoiceTranscript(conversation: ConversationState, text: string, audioPath: string, deps: OrchestratorDeps): Promise<TurnOutcome> {
+  if (!text.trim()) throw new Error('No se detectó voz.');
+  const last = conversation.turns[conversation.turns.length - 1];
+  if (last?.source === 'voice' && last.reference === audioPath && last.text === '[audio pendiente de transcripción]') {
+    conversation = { ...conversation, turns: conversation.turns.slice(0, -1) };
+  }
+  const withTurn = addTurn(conversation, { role: 'user', text, source: 'voice', reference: audioPath, at: deps.now().toISOString() });
+  await deps.checkpoint?.(withTurn);
+  return runExtraction(withTurn, 'voice', deps, () => deps.runtime.extractFromText({ text, language: deps.language, targetFields: pendingTargets(conversation),
+    onResponding: deps.onResponding }));
+}
+
+/** Human approval is the only entry point for a staged photo into the chat. */
+export async function submitReviewedPhoto(conversation: ConversationState, proposal: NameplateProposal, edits: ExtractedValue[], deps: OrchestratorDeps): Promise<TurnOutcome> {
+  const values = validateNameplateEdits(proposal, edits);
+  const text = 'Placa revisada: ' + values.filter(value => value.value !== null).map(value => `${labelOf(value.field)}: ${value.value}`).join('; ');
+  const last = conversation.turns[conversation.turns.length - 1];
+  const withTurn = last?.role === 'user' && last.reference === proposal.imagePath && last.text === text ? conversation
+    : addTurn(conversation, { role: 'user', text, source: 'image', reference: proposal.imagePath, at: deps.now().toISOString() });
+  await deps.checkpoint?.(withTurn);
+  const outcome = await runExtraction(withTurn, 'image', deps, async () => ({ values }));
+  if (outcome.status === 'ok') {
+    outcome.result.conversation = { ...outcome.result.conversation, pendingImagePath: null };
+    for (const value of values) {
+      const original = proposal.values.find(item => item.field === value.field);
+      const applied = outcome.result.conversation.fields[value.field];
+      if (value.value !== null && original?.value !== value.value && applied.value === value.value && applied.source === 'image') {
+        outcome.result.conversation = { ...outcome.result.conversation, fields: { ...outcome.result.conversation.fields,
+          [value.field]: { ...applied, source: 'text', status: 'reported' } } };
+      }
+    }
+    outcome.result.rejected.push(...proposal.rejected);
+  }
+  return outcome;
+}
+
+/**
+ * Every field still unknown, not just `pendingField` — a reply can answer
+ * more than the one thing the agent last asked about (e.g. "la marca es
+ * Philips y el modelo es X" while only brand was pending), so the model is
+ * always asked for everything missing rather than narrowed to one field
+ * (product requirement, 2026-09-10).
+ */
 function pendingTargets(conversation: ConversationState): CaptureField[] {
-  const pending = conversation.pendingField;
-  if (pending && !isKnown(conversation.fields[pending])) return [pending];
   return Object.values(conversation.fields).filter(state => !isKnown(state)).map(state => state.field);
 }

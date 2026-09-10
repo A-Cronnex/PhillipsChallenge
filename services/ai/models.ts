@@ -59,6 +59,7 @@ export const MODEL_REGISTRY_NAMES = {
   translationEnEsVocab: 'BERGAMOT_EN_ES_VOCAB',
   /** Speech-to-text. Size not decided (docs/ai-agent.md §12). */
   speech: 'WHISPER_BASE_Q8_0',
+  speechVad: 'VAD_SILERO_5_1_2',
 } as const;
 
 export type ModelRole = keyof typeof MODEL_REGISTRY_NAMES;

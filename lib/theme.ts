@@ -15,22 +15,28 @@ export const spacing = {
 } as const;
 
 export const colors = {
-  background: '#FFFBFE',
-  surface: '#FFFFFF',
-  surfaceVariant: '#E7E0EC',
-  outline: '#79747E',
-  onSurface: '#1C1B1F',
-  onSurfaceVariant: '#49454F',
-  primary: '#0F62A6',
-  onPrimary: '#FFFFFF',
-  error: '#B3261E',
-  errorContainer: '#F9DEDC',
-  success: '#1B5E20',
-  successContainer: '#D7EBD8',
-  pending: '#7A5900',
-  pendingContainer: '#FFEFC2',
-  disabled: '#C4C7C5',
+  background: '#0B1019',
+  surface: '#141D2A',
+  surfaceVariant: '#202C3D',
+  outline: '#7D8CA3',
+  onSurface: '#F1F5FC',
+  onSurfaceVariant: '#ACBAD0',
+  primary: '#A7CAFF',
+  onPrimary: '#102746',
+  error: '#FFB4B4',
+  errorContainer: '#42252E',
+  success: '#9DDBB6',
+  successContainer: '#193A30',
+  pending: '#E9CE91',
+  pendingContainer: '#3A3222',
+  disabled: '#455166',
+  border: 'rgba(199, 219, 255, 0.14)',
+  glass: 'rgba(26, 38, 56, 0.88)',
+  glow: '#75A9ED',
+  scrim: 'rgba(3, 7, 13, 0.78)',
 } as const;
+
+export const radii = { sm: 12, md: 20, lg: 28 } as const;
 
 export const typography = {
   titleLarge: { fontSize: 22, fontWeight: '600' as const },

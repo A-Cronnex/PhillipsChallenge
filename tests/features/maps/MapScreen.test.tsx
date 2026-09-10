@@ -1,7 +1,8 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react-native';
 import { View } from 'react-native';
 
 import { MapScreen } from '../../../features/maps/ui/MapScreen';
+import { getDashboardScopeSite, setDashboardScopeSite } from '../../../lib/dashboard-scope';
 import type { Repositories } from '../../../lib/container';
 import type {
   MapDataset,
@@ -150,6 +151,7 @@ function repositories(options: {
 beforeEach(() => {
   mockGetRepositories.mockReset();
   mockPush.mockReset();
+  setDashboardScopeSite(null);
 });
 
 describe('MapScreen', () => {
@@ -338,24 +340,7 @@ describe('MapScreen', () => {
     await waitFor(() => expect(screen.getByTestId('map-summary')).toBeTruthy());
   });
 
-  it('shows map cache state separately from business data', async () => {
-    mockGetRepositories.mockResolvedValue(
-      repositories({ dataset: { sites: [SITE] }, regions: [] })
-    );
-    render(<MapScreen />);
-
-    await waitFor(() =>
-      expect(screen.getByTestId('map-cache-state')).toBeTruthy()
-    );
-    // A site is present but no region is downloaded — the two must not be
-    // conflated (CLAUDE.md §10).
-    expect(screen.getByText('Ninguna región descargada.')).toBeTruthy();
-    expect(
-      screen.getByText(/descargar un mapa no descarga sitios ni equipos/)
-    ).toBeTruthy();
-  });
-
-  it('shows a downloading region with its progress', async () => {
+  it('shows only the map and the site-count indicator by default — no region list until searched', async () => {
     mockGetRepositories.mockResolvedValue(
       repositories({
         dataset: { sites: [SITE] },
@@ -374,6 +359,38 @@ describe('MapScreen', () => {
       })
     );
     render(<MapScreen />);
+
+    await waitFor(() => expect(screen.getByTestId('maplibre-map')).toBeTruthy());
+    expect(screen.getByTestId('map-summary')).toBeTruthy();
+    expect(screen.getByText('1 sitio(s) en el mapa')).toBeTruthy();
+    // No region text sits on screen unasked (CLAUDE.md §10 — map cache state
+    // is real, but it is not shown until the user searches for it).
+    expect(screen.queryByTestId('map-region-search-results')).toBeNull();
+    expect(screen.queryByText(/Panamá/)).toBeNull();
+  });
+
+  it('shows a downloading region with its progress once searched', async () => {
+    mockGetRepositories.mockResolvedValue(
+      repositories({
+        dataset: { sites: [SITE] },
+        regions: [
+          {
+            id: 'r1',
+            name: 'Panamá',
+            bounds: [-83, 7, -77, 10],
+            status: 'downloading',
+            progress: 0.42,
+            lastError: null,
+            sizeBytes: null,
+            downloadedAt: null,
+          },
+        ],
+      })
+    );
+    render(<MapScreen />);
+
+    await waitFor(() => expect(screen.getByTestId('maplibre-map')).toBeTruthy());
+    fireEvent.changeText(screen.getByTestId('map-region-search-input'), 'panam');
 
     await waitFor(() =>
       expect(screen.getByText(/Panamá — downloading \(42%\)/)).toBeTruthy()
@@ -411,6 +428,9 @@ describe('MapScreen', () => {
     );
     render(<MapScreen />);
 
+    await waitFor(() => expect(screen.getByTestId('maplibre-map')).toBeTruthy());
+    fireEvent.changeText(screen.getByTestId('map-region-search-input'), predefined.name);
+
     await waitFor(() =>
       expect(screen.getByTestId(`download-region-${predefined.id}`)).toBeTruthy()
     );
@@ -438,6 +458,9 @@ describe('MapScreen', () => {
     );
     render(<MapScreen />);
 
+    await waitFor(() => expect(screen.getByTestId('maplibre-map')).toBeTruthy());
+    fireEvent.changeText(screen.getByTestId('map-region-search-input'), predefined.name);
+
     await waitFor(() =>
       expect(screen.getByTestId(`download-region-${predefined.id}`)).toBeTruthy()
     );
@@ -453,5 +476,70 @@ describe('MapScreen', () => {
     );
     // Retryable: the button comes back once the region is failed.
     expect(screen.getByTestId(`download-region-${predefined.id}`)).toBeTruthy();
+  });
+
+  const SEEDED_REGIONS: MapRegion[] = PREDEFINED_REGIONS.map((region) => ({
+    id: region.id,
+    name: region.name,
+    bounds: region.bounds,
+    status: 'not_downloaded',
+    progress: 0,
+    lastError: null,
+    sizeBytes: null,
+    downloadedAt: null,
+  }));
+
+  it('filters the downloadable regions as the user types in the search bar', async () => {
+    mockGetRepositories.mockResolvedValue(
+      repositories({ dataset: { sites: [SITE] }, regions: SEEDED_REGIONS })
+    );
+    render(<MapScreen />);
+
+    await waitFor(() => expect(screen.getByTestId('maplibre-map')).toBeTruthy());
+    // Nothing shows until the user searches.
+    expect(screen.queryByTestId('map-region-search-results')).toBeNull();
+
+    fireEvent.changeText(screen.getByTestId('map-region-search-input'), 'panam');
+
+    const results = within(screen.getByTestId('map-region-search-results'));
+    expect(results.getByText(/Panamá \(contorno\)/)).toBeTruthy();
+    expect(results.getByText(/Ciudad de Panamá/)).toBeTruthy();
+    expect(results.queryByText(/Sao Paulo/)).toBeNull();
+  });
+
+  it('shows no matches rather than the full list for a query that matches nothing', async () => {
+    mockGetRepositories.mockResolvedValue(
+      repositories({ dataset: { sites: [SITE] }, regions: SEEDED_REGIONS })
+    );
+    render(<MapScreen />);
+
+    await waitFor(() => expect(screen.getByTestId('maplibre-map')).toBeTruthy());
+    fireEvent.changeText(screen.getByTestId('map-region-search-input'), 'atlantida');
+
+    await waitFor(() =>
+      expect(screen.getByText(/Ningún mapa coincide/)).toBeTruthy()
+    );
+  });
+
+  it('shows a "customer summary" button on a selected site, which scopes and opens the dashboard', async () => {
+    mockGetRepositories.mockResolvedValue(
+      repositories({ dataset: { sites: [SITE], equipment: [EQUIPMENT] } })
+    );
+    render(<MapScreen />);
+    await waitFor(() => expect(screen.getByTestId('maplibre-map')).toBeTruthy());
+
+    fireEvent(screen.getByTestId('mock-geojson-source'), 'press', sitePressEvent('site-1'));
+    await waitFor(() => expect(screen.getByTestId('site-detail')).toBeTruthy());
+
+    expect(getDashboardScopeSite()).toBeNull();
+    fireEvent.press(screen.getByTestId('show-customer-summary'));
+
+    expect(getDashboardScopeSite()).toEqual({
+      siteId: 'site-1',
+      name: 'Hospital Example',
+      city: 'Panama City',
+      country: 'Panama',
+    });
+    expect(mockPush).toHaveBeenCalledWith('/dashboard');
   });
 });

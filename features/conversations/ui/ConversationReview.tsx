@@ -1,49 +1,24 @@
-import { useEffect, useState } from 'react';
-import { ScrollView, Text, Button } from 'react-native';
+import { AppButton as Button } from '../../../components/ui/AppButton';
+import { useConversationReview } from './useConversationReview';
+import { colors } from '../../../lib/theme';
+import { ScrollView, Text } from 'react-native';
 import { TextField } from '../../../components/forms/TextField';
 import { ConfidenceSelector } from '../../../components/forms/ConfidenceSelector';
 import { OptionPicker } from '../../../components/forms/OptionPicker';
 import { SiteCreator } from '../../catalog/ui/SiteCreator';
 import { EquipmentPicker } from '../../catalog/ui/EquipmentPicker';
-import type { SiteSummary } from '../../sites/application/ports';
-import { getRepositories } from '../../../lib/container';
-import { newId } from '../../../lib/id';
-import { emptyFormValues, toDraft } from '../../observations/ui/form-mapping';
 import { CAPTURE_FIELD_SPECS } from '../domain/fields';
-import { FIELD_CONFIDENCE_ATTRIBUTE, attributeConfidenceRecords } from '../domain/confidence';
-import { isKnown, type ConversationState } from '../domain/conversation';
-import { saveConversation } from '../application/save-conversation';
+import { FIELD_CONFIDENCE_ATTRIBUTE } from '../domain/confidence';
+import { type ConversationState } from '../domain/conversation';
 
 export function ConversationReview({ conversation, onSaved, onCancel }: {
   conversation: ConversationState; onSaved: () => void; onCancel: () => void;
 }) {
-  const [sites, setSites] = useState<SiteSummary[]>([]);
-  const [values, setValues] = useState(() => {
-    const initial = emptyFormValues({ visitDate: new Date().toISOString().slice(0, 10) });
-    for (const field of Object.keys(initial)) {
-      const state = conversation.fields[field as keyof typeof conversation.fields];
-      if (state && isKnown(state)) Object.assign(initial, { [field]: String(state.value) });
-    }
-    for (const row of attributeConfidenceRecords(conversation)) initial.attributeConfidence[row.attributeName] = row.confidenceLevel;
-    return initial;
-  });
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-  async function loadSites() { setSites(await (await getRepositories()).sites.listSites()); }
-  useEffect(() => { void loadSites().catch(() => setError('No se pudieron cargar los sitios.')); }, []);
-  async function save() {
-    if (busy) return;
-    setBusy(true); setError('');
-    try {
-      await saveConversation(conversation, toDraft(values), { repository: (await getRepositories()).conversations, now: () => new Date(), newId });
-      onSaved();
-    } catch (caught) { setError(caught instanceof Error ? caught.message : 'No se pudo guardar.'); }
-    finally { setBusy(false); }
-  }
+  const { sites, values, setValues, error, busy, loadSites, save } = useConversationReview(conversation, onSaved);
   return <ScrollView contentContainerStyle={{ padding: 20, gap: 12 }} keyboardShouldPersistTaps="handled">
-    <Text style={{ fontSize: 24 }}>Revisar observación</Text>
-    <Text>Confirma el sitio y corrige los valores propuestos. Los campos desconocidos pueden quedar vacíos.</Text>
-    <Text>Sitio mencionado: {String(conversation.fields.siteName.value ?? 'Sin indicar')}</Text>
+    <Text style={{ fontSize: 24, color: colors.onSurface }}>Revisar observación</Text>
+    <Text style={{ color: colors.onSurfaceVariant }}>Confirma el sitio y corrige los valores propuestos. Los campos desconocidos pueden quedar vacíos.</Text>
+    <Text style={{ color: colors.onSurfaceVariant }}>Sitio mencionado: {String(conversation.fields.siteName.value ?? 'Sin indicar')}</Text>
     <OptionPicker label="Sitio" selected={values.siteId} options={sites.map(site => ({ value: site.id, label: site.name,
       detail: [site.city, site.country].filter(Boolean).join(', ') }))} onSelect={siteId => setValues(v => ({ ...v, siteId, equipmentId: null }))} emptyMessage="Registra un sitio" />
     <SiteCreator onCreated={async id => { await loadSites(); setValues(v => ({ ...v, siteId: id, equipmentId: null })); }} />
@@ -60,7 +35,7 @@ export function ConversationReview({ conversation, onSaved, onCancel }: {
           onChange={level => setValues(v => ({ ...v, attributeConfidence: { ...v.attributeConfidence, [attribute]: level } }))} /> : null}
       </ScrollView>;
     })}
-    {error ? <Text accessibilityRole="alert">{error}</Text> : null}
+    {error ? <Text style={{ color: colors.error }} accessibilityRole="alert">{error}</Text> : null}
     <Button title={busy ? 'Guardando…' : 'Confirmar y guardar en el dispositivo'} disabled={busy} onPress={() => void save()} />
     <Button title="Volver a la conversación" disabled={busy} onPress={onCancel} />
   </ScrollView>;

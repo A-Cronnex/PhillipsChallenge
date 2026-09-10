@@ -11,6 +11,15 @@ import type { AgentExtraction } from '../domain/extraction';
 import type { ConversationState } from '../domain/conversation';
 
 export type UserLanguage = 'es' | 'en';
+export type AgentActivity = 'idle' | 'listening' | 'thinking' | 'responding';
+
+export interface SpeechSession {
+  /** 16 kHz, mono, signed 16-bit little-endian PCM. */
+  write(chunk: Uint8Array): void;
+  finish(): Promise<string>;
+  cancel(): void;
+  result: Promise<string>;
+}
 
 export interface TextExtractionRequest {
   /** What the user said or typed, in their own language. */
@@ -18,6 +27,7 @@ export interface TextExtractionRequest {
   language: UserLanguage;
   /** Fields still missing, so the model is asked for those and not the rest. */
   targetFields: CaptureField[];
+  onResponding?: () => void;
 }
 
 export interface ImageExtractionRequest {
@@ -42,6 +52,8 @@ export interface AiRuntime {
   extractFromImage(request: ImageExtractionRequest): Promise<AgentExtraction>;
   /** Speech to text. Returns text in the language spoken. */
   transcribe(audioPath: string): Promise<string>;
+  /** Optional for older adapters; UI reports unavailable rather than faking partials. */
+  openSpeechSession?(onPartial: (text: string) => void): Promise<SpeechSession>;
 }
 
 /** Persistence of the conversation itself (docs/domain-model.md §10). */

@@ -6,9 +6,11 @@
  * including "just for development" — an API key in a style URL is a runtime
  * cloud dependency regardless of how the map behaves once cached.
  *
- * Tiles are generated offline from OpenStreetMap extracts with Protomaps or
- * the OpenMapTiles toolchain and distributed either bundled with the app or
- * served from the project's own backend (docs/offline-sync.md §12).
+ * Tiles are generated offline from OpenStreetMap with OpenFreeMap's
+ * Planetiler pipeline (OpenMapTiles schema) and served from the project's own
+ * tile server (`tileserver/`, docs/maps.md §4). OpenFreeMap's own hosted
+ * endpoints are a third-party CDN and are on the forbidden list below — only
+ * its data and styles are used, self-hosted.
  */
 
 /**
@@ -53,6 +55,10 @@ const FORBIDDEN_TILE_HOSTS = [
   'cartocdn.com',
   'openstreetmap.org',
   'demotiles.maplibre.org',
+  // OpenFreeMap's data and styles are used, but only self-hosted: its own
+  // hosted tiles/assets/fonts are a third-party CDN (docs/maps.md §4).
+  'openfreemap.org',
+  'openfreemap.com',
 ];
 
 export class CloudTileProviderError extends Error {

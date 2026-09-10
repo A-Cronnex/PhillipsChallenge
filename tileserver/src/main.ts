@@ -1,72 +1,79 @@
 /**
  * Process entrypoint for the self-hosted basemap server.
  *
- * Serves a MapLibre style and its vector tiles, built from the extracts in
- * `data/*.geojson` (produced by `npm run fetch-sources`, see
- * `scripts/fetch-osm-sources.ts`). This is what `docs/maps.md §5` calls
- * option 1 — "serve tiles over HTTP from the project's own backend" — the
- * one this repository had documented but never built.
+ * Serves a MapLibre style plus everything that style references — vector
+ * tiles, glyph (font) PBFs and a sprite sheet — all from this project's own
+ * process, so the app has no third-party map dependency at runtime
+ * (docs/tech-stack.md §4a).
+ *
+ * The data comes from OpenFreeMap's pipeline, built locally by
+ * `npm run build-tiles` (see `scripts/build-tiles.ts`):
+ *   - `data/*.mbtiles`  — Planetiler-built vector tiles, OpenMapTiles schema.
+ *   - `assets/fonts/*`  — OpenFreeMap glyph PBFs (Noto Sans Regular/Bold/Italic).
+ *   - `assets/sprites/*`— OpenFreeMap sprite sheet (`ofm_f384`).
+ *   - `styles/liberty.json` — OpenFreeMap's Liberty style, vendored.
  *
  * Uses Node's built-in `http` module and no framework, matching
- * `server/src/main.ts`'s reasoning: two routes need no routing library.
- *
- * Tiles are sliced from the GeoJSON extracts at request time by
- * `geojson-vt`, not pre-rendered into a `.mbtiles` file — there is no
- * tippecanoe/osmium toolchain installed in this environment, and a pure-JS
- * pipeline needs none. `geojson-vt` builds its per-layer index once, at
- * startup, from data already resident in memory (~22MB across four files),
- * so per-request work is just slicing an already-built tile, not
- * reprocessing the source.
+ * `server/src/main.ts`'s reasoning: a handful of static routes need no routing
+ * library. Tiles are read straight from the MBTiles SQLite file by prepared
+ * statement (`src/mbtiles.ts`) — there is no request-time slicing anymore.
  *
  * Run with (mirrors server/README.md's Setup section):
  *   cd tileserver && npm install
- *   npm run fetch-sources   # writes data/*.geojson (re-run to refresh)
+ *   npm run build-tiles     # downloads Planetiler + OpenFreeMap assets, builds data/*.mbtiles
  *   npm run build && npm start
+ *
+ * Prerequisites for `build-tiles`: a JDK 21+ on PATH (Planetiler) and `tar`.
  */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
-import { join } from 'node:path';
+import { join, normalize } from 'node:path';
 
-import GeoJSONVT, { type VectorTile } from 'geojson-vt';
-import vtpbf from 'vt-pbf';
-
+import { isGzip, Mbtiles } from './mbtiles';
 import { buildStyle } from './style';
 
-// Compiled to CommonJS (tsconfig.json), so `__dirname` is the real,
-// synchronous CJS global here (from @types/node) — not the ESM
-// `import.meta.url` dance, which `tsc --module commonjs` refuses to emit.
-// `rootDir: ".."` (tsconfig.json) means this file compiles to
-// `dist/tileserver/src/main.js`, three levels below `tileserver/`.
-const DATA_DIR = join(__dirname, '..', '..', '..', 'data');
-
-const LAYER_FILES = {
-  roads: 'roads.geojson',
-  water: 'water.geojson',
-  landuse: 'landuse.geojson',
-  country_boundaries: 'country_boundaries.geojson',
-} as const;
-
-type LayerName = keyof typeof LAYER_FILES;
-
-type TileIndex = InstanceType<typeof GeoJSONVT>;
-
-/** Built once at startup; `getTile` on an existing index is cheap. */
-function buildTileIndexes(): Record<LayerName, TileIndex> {
-  const indexes = {} as Record<LayerName, TileIndex>;
-  for (const [layer, file] of Object.entries(LAYER_FILES) as [LayerName, string][]) {
-    const raw = readFileSync(join(DATA_DIR, file), 'utf8');
-    const geojson = JSON.parse(raw);
-    console.log(`[tileserver] indexing ${layer} (${geojson.features.length} features)…`);
-    indexes[layer] = new GeoJSONVT(geojson, { maxZoom: 16, buffer: 64 });
-  }
-  return indexes;
-}
+// Compiled to CommonJS (tsconfig.json), so `__dirname` is the real CJS global
+// here. `rootDir: ".."` means this file compiles to `dist/tileserver/src/main.js`,
+// three levels below `tileserver/`.
+const TILESERVER_ROOT = join(__dirname, '..', '..', '..');
+const DATA_DIR = join(TILESERVER_ROOT, 'data');
+const FONTS_DIR = join(TILESERVER_ROOT, 'assets', 'fonts');
+const SPRITES_DIR = join(TILESERVER_ROOT, 'assets', 'sprites');
 
 const TILE_PATH = /^\/tiles\/(\d+)\/(\d+)\/(\d+)\.pbf$/;
+const FONT_PATH = /^\/fonts\/([^/]+)\/(\d+-\d+)\.pbf$/;
+const SPRITE_PATH = /^\/sprites\/([^/]+)\/([^/]+?)(@2x)?\.(json|png)$/;
+
+/** Opens every `.mbtiles` in `data/`. First file with a tile at a coordinate wins. */
+function openTileSources(): Mbtiles[] {
+  let files: string[];
+  try {
+    files = readdirSync(DATA_DIR).filter((name) => name.endsWith('.mbtiles'));
+  } catch {
+    files = [];
+  }
+
+  if (files.length === 0) {
+    console.warn(
+      `[tileserver] no .mbtiles found in ${DATA_DIR} — run "npm run build-tiles" first. ` +
+        'Tile requests will return 204.'
+    );
+    return [];
+  }
+
+  return files.map((name) => {
+    const source = new Mbtiles(join(DATA_DIR, name));
+    console.log(
+      `[tileserver] loaded ${name} (z${source.metadata.minzoom}-${source.metadata.maxzoom}, ` +
+        `${source.metadata.vectorLayers.length} vector layer(s))`
+    );
+    return source;
+  });
+}
 
 function handleTileRequest(
-  indexes: Record<LayerName, TileIndex>,
+  sources: Mbtiles[],
   path: string,
   response: ServerResponse
 ): boolean {
@@ -77,61 +84,151 @@ function handleTileRequest(
   const x = Number(match[2]);
   const y = Number(match[3]);
 
-  const layerMap: Record<string, VectorTile> = {};
-  for (const layer of Object.keys(indexes) as LayerName[]) {
-    const tile = indexes[layer].getTile(z, x, y);
-    if (tile && tile.features.length > 0) layerMap[layer] = tile;
+  let tile: Buffer | null = null;
+  for (const source of sources) {
+    tile = source.getTile(z, x, y);
+    if (tile) break;
   }
 
-  if (Object.keys(layerMap).length === 0) {
-    // A valid, empty response — most tiles outside the two city extracts
-    // have no roads/water/landuse, only (possibly) a boundary line.
+  if (!tile) {
+    // A valid, empty response — most of the world has no tile in these
+    // regional extracts.
     response.writeHead(204);
     response.end();
     return true;
   }
 
-  const buffer = vtpbf.fromGeojsonVt(layerMap);
-  const gzipped = gzipSync(buffer);
+  // Planetiler stores tiles gzip-compressed; pass those through untouched.
+  // Guard anyway in case a future source stores them raw.
+  const gzipped = isGzip(tile) ? tile : gzipSync(tile);
   response.writeHead(200, {
     'content-type': 'application/x-protobuf',
     'content-encoding': 'gzip',
-    // Tiles are static for the process's lifetime — this server has no
-    // write path — so caching aggressively costs nothing and saves the
-    // repeat re-slicing.
+    // Tiles are static for the process's lifetime — this server has no write
+    // path — so caching aggressively costs nothing.
     'cache-control': 'public, max-age=86400',
   });
   response.end(gzipped);
   return true;
 }
 
-function handleStyleRequest(request: IncomingMessage, path: string, response: ServerResponse): boolean {
+/** Resolves a request path segment to a file inside `baseDir`, or `null` if it escapes it. */
+function safeJoin(baseDir: string, ...segments: string[]): string | null {
+  const resolved = normalize(join(baseDir, ...segments));
+  return resolved === baseDir || resolved.startsWith(baseDir + '/') ? resolved : null;
+}
+
+function serveFile(
+  filePath: string,
+  contentType: string,
+  contentEncoding: string | null,
+  response: ServerResponse
+): void {
+  let body: Buffer;
+  try {
+    body = readFileSync(filePath);
+  } catch {
+    response.writeHead(404, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ error: 'not_found' }));
+    return;
+  }
+  const headers: Record<string, string> = {
+    'content-type': contentType,
+    'cache-control': 'public, max-age=86400',
+  };
+  if (contentEncoding) headers['content-encoding'] = contentEncoding;
+  response.writeHead(200, headers);
+  response.end(body);
+}
+
+/**
+ * `/fonts/{fontstack}/{range}.pbf`. MapLibre may request a comma-joined
+ * fallback stack ("Noto Sans Regular,Noto Sans Bold"); the assets only have
+ * single-name directories, so try each name in order and serve the first hit.
+ */
+function handleFontRequest(path: string, response: ServerResponse): boolean {
+  const match = FONT_PATH.exec(path);
+  if (!match) return false;
+
+  const fontstack = decodeURIComponent(match[1]);
+  const range = match[2];
+
+  for (const name of fontstack.split(',')) {
+    const candidate = safeJoin(FONTS_DIR, name.trim(), `${range}.pbf`);
+    if (!candidate) continue;
+    try {
+      const body = readFileSync(candidate);
+      response.writeHead(200, {
+        'content-type': 'application/x-protobuf',
+        'cache-control': 'public, max-age=604800',
+      });
+      response.end(body);
+      return true;
+    } catch {
+      // Try the next name in the fallback stack.
+    }
+  }
+
+  response.writeHead(404, { 'content-type': 'application/json' });
+  response.end(JSON.stringify({ error: 'not_found' }));
+  return true;
+}
+
+/** `/sprites/{set}/{name}(@2x)?.(json|png)`. */
+function handleSpriteRequest(path: string, response: ServerResponse): boolean {
+  const match = SPRITE_PATH.exec(path);
+  if (!match) return false;
+
+  const [, set, name, retina, extension] = match;
+  const fileName = `${name}${retina ?? ''}.${extension}`;
+  const candidate = safeJoin(SPRITES_DIR, decodeURIComponent(set), fileName);
+  if (!candidate) {
+    response.writeHead(404, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ error: 'not_found' }));
+    return true;
+  }
+
+  serveFile(
+    candidate,
+    extension === 'json' ? 'application/json' : 'image/png',
+    null,
+    response
+  );
+  return true;
+}
+
+function handleStyleRequest(
+  request: IncomingMessage,
+  path: string,
+  response: ServerResponse
+): boolean {
   if (path !== '/styles/self-hosted.json') return false;
 
-  // The style must point back at whatever host:port the client actually used
-  // to reach this server — on a phone that's the machine's LAN IP, which
-  // varies by network. Deriving it from the request's own Host header means
-  // the style is correct without hardcoding an address anywhere.
+  // The style must point back at whatever host:port the client used to reach
+  // this server — on a phone that is the machine's LAN IP, which varies by
+  // network. Deriving it from the request's own Host header keeps the style
+  // correct without hardcoding an address.
   const host = request.headers.host ?? 'localhost';
   const style = buildStyle(`http://${host}`);
-  const body = JSON.stringify(style);
   response.writeHead(200, {
     'content-type': 'application/json',
     'cache-control': 'no-store',
   });
-  response.end(body);
+  response.end(JSON.stringify(style));
   return true;
 }
 
 export function main(): void {
-  const indexes = buildTileIndexes();
+  const sources = openTileSources();
 
   const server = createServer((request: IncomingMessage, response: ServerResponse) => {
     try {
       const path = (request.url ?? '/').split('?')[0];
 
       if (handleStyleRequest(request, path, response)) return;
-      if (handleTileRequest(indexes, path, response)) return;
+      if (handleTileRequest(sources, path, response)) return;
+      if (handleFontRequest(path, response)) return;
+      if (handleSpriteRequest(path, response)) return;
 
       response.writeHead(404, { 'content-type': 'application/json' });
       response.end(JSON.stringify({ error: 'not_found' }));
@@ -143,9 +240,8 @@ export function main(): void {
   });
 
   const port = Number(process.env.PORT ?? 8090);
-  // 0.0.0.0, not 127.0.0.1: a phone on the same Wi-Fi needs to reach this
-  // process by the development machine's LAN IP, same as Metro already does
-  // for the JS bundle (docs/android-installation.md).
+  // 0.0.0.0, not 127.0.0.1: a phone on the same Wi-Fi reaches this process by
+  // the development machine's LAN IP, same as Metro does for the JS bundle.
   const host = process.env.HOST ?? '0.0.0.0';
   server.listen(port, host, () => {
     console.log(`[tileserver] listening on ${host}:${port}`);
@@ -153,10 +249,8 @@ export function main(): void {
   });
 }
 
-// Compiled to CommonJS (tsconfig.json), so this mirrors server/src/main.ts's
-// own guard: importing the compiled module — from a test, say — must not
-// bind a socket as a side effect, only running it as the process entrypoint
-// does.
+// Mirrors server/src/main.ts's guard: importing the compiled module (from a
+// test, say) must not bind a socket as a side effect.
 declare const require: { main?: unknown } | undefined;
 declare const module: unknown;
 const isProcessEntrypoint =
