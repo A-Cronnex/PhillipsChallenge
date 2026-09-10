@@ -74,6 +74,26 @@ La segunda URL debe servir un estilo MapLibre y sus tiles, sprites y fuentes des
 infraestructura propia. No es una URL de imagen ni una clave de Mapbox/MapTiler.
 Sin ella, se muestran los puntos de los sitios sobre un fondo simple.
 
+Este repositorio incluye esa infraestructura propia para Sao Paulo y Ciudad de
+Panamá (`tileserver/`, ver [maps.md](maps.md) §4). Para levantarla en desarrollo:
+
+```bash
+cd tileserver
+npm install
+npm run fetch-sources   # descarga el extracto de OSM a data/*.geojson (una vez)
+npm run build && npm start
+```
+
+Con el servidor escuchando (por defecto puerto 8090, en todas las interfaces),
+apunta `EXPO_PUBLIC_MAP_STYLE_URL` a la IP de tu red local, la misma que usas
+para Metro:
+
+```dotenv
+EXPO_PUBLIC_MAP_STYLE_URL=http://192.168.x.x:8090/styles/self-hosted.json
+```
+
+Reinicia Metro después. El teléfono debe estar en la misma red Wi-Fi.
+
 Las variables `EXPO_PUBLIC_*` se incluyen en el JavaScript: **nunca pongas un
 token en ellas**. La credencial de sincronización se introduce en el Tablero y se
 mantiene solo en memoria. Para provisionarla, consulta [sync-api.md](sync-api.md#14-conexion-operativa-del-mvp).

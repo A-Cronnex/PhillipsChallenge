@@ -3,6 +3,7 @@ import { View, Text, Button } from 'react-native';
 import { TextField } from '../../../components/forms/TextField';
 import { LoadingState } from '../../../components/ui/ScreenStates';
 import { getRepositories } from '../../../lib/container';
+import { ensureDemoDataSeeded } from '../../../lib/demo-seed';
 
 export function LocalUserGate({ children }: { children: ReactNode }) {
   const [phase, setPhase] = useState('loading');
@@ -12,11 +13,17 @@ export function LocalUserGate({ children }: { children: ReactNode }) {
   async function load() {
     try {
       const repositories = await getRepositories();
-      setPhase(await repositories.users.getCurrentUser() ? 'ready' : 'setup');
+      const hasUser = await repositories.users.getCurrentUser();
+      setPhase(hasUser ? 'ready' : 'setup');
       setError('');
     } catch { setPhase('error'); setError('No se pudo abrir el almacenamiento local.'); }
   }
   useEffect(() => { void load(); }, []);
+  // Fire-and-forget: seeding must not delay showing the app, and its own
+  // failures are logged, not surfaced here (lib/demo-seed.ts).
+  useEffect(() => {
+    if (phase === 'ready') void ensureDemoDataSeeded();
+  }, [phase]);
   if (phase === 'loading') return <LoadingState message="Abriendo datos locales…" />;
   if (phase === 'ready') return <>{children}</>;
   async function save() {
