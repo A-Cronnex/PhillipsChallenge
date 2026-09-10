@@ -109,6 +109,16 @@ describe('DashboardScreen', () => {
     expect(screen.getByTestId('tile-units-value')).toHaveTextContent('5');
   });
 
+  it('reduces sync to a single corner icon, with neither of the old buttons', async () => {
+    mockGetRepositories.mockResolvedValue(buildRepositories({ facts: [fact()] }));
+    render(<DashboardScreen />);
+
+    await waitFor(() => expect(screen.getByTestId('dashboard-screen')).toBeTruthy());
+    expect(screen.getByTestId('sync-icon-button')).toBeTruthy();
+    expect(screen.queryByText('Sincronizar ahora')).toBeNull();
+    expect(screen.queryByText('Mostrar identificadores para configurar acceso')).toBeNull();
+  });
+
   it('shows equipment that was never assigned a modality instead of hiding it', async () => {
     mockGetRepositories.mockResolvedValue(
       buildRepositories({ facts: [fact({ modality: null })] })
