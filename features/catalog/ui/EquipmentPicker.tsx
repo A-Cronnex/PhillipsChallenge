@@ -1,3 +1,4 @@
+import { colors } from '../../../lib/theme';
 import { useEffect, useState } from 'react';
 import { View, Text } from 'react-native';
 import { OptionPicker } from '../../../components/forms/OptionPicker';
@@ -24,7 +25,7 @@ export function EquipmentPicker({ siteId, selected, onSelect }: {
         label: [item.brand, item.model, item.modality].filter(Boolean).join(' · ') || item.id,
         detail: item.id }))]}
       onSelect={id => onSelect(id === 'new' ? null : id)} emptyMessage="Sin equipos" />
-    <Text>Si ya existe, selecciónalo para añadir otra observación a su historial. Revisa la lista para evitar duplicados.</Text>
-    {error ? <Text accessibilityRole="alert">{error}</Text> : null}
+    <Text style={{ color: colors.onSurfaceVariant }}>Si ya existe, selecciónalo para añadir otra observación a su historial. Revisa la lista para evitar duplicados.</Text>
+    {error ? <Text style={{ color: colors.error }} accessibilityRole="alert">{error}</Text> : null}
   </View>;
 }

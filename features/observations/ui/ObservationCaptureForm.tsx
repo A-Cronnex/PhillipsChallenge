@@ -1,4 +1,5 @@
-import { Button } from 'react-native';
+import { AppButton as Button } from '../../../components/ui/AppButton';
+import {  } from 'react-native';
 import { SiteCreator } from '../../catalog/ui/SiteCreator';
 import { EquipmentPicker } from '../../catalog/ui/EquipmentPicker';
 import {
@@ -66,7 +67,7 @@ export function ObservationCaptureForm() {
   if (capture.sites.length === 0) {
     return (
       <ScrollView contentContainerStyle={{ padding: 24, gap: 16 }}>
-        <Text>No hay sitios guardados. Registra el primero para comenzar.</Text>
+        <Text style={{ color: colors.onSurfaceVariant }}>No hay sitios guardados. Registra el primero para comenzar.</Text>
         <Button title="Actualizar sitios" onPress={() => void capture.reload()} />
         <SiteCreator onCreated={async id => { await capture.reload(); capture.update({ siteId: id }); }} />
       </ScrollView>
@@ -317,7 +318,7 @@ const styles = StyleSheet.create({
   confirmation: {
     padding: spacing.md,
     marginBottom: spacing.md,
-    borderRadius: 4,
+    borderRadius: 12,
     backgroundColor: colors.successContainer,
     gap: spacing.sm,
   },
@@ -325,7 +326,7 @@ const styles = StyleSheet.create({
   saveError: {
     padding: spacing.md,
     marginBottom: spacing.md,
-    borderRadius: 4,
+    borderRadius: 12,
     backgroundColor: colors.errorContainer,
     gap: spacing.xs,
   },
@@ -340,7 +341,7 @@ const styles = StyleSheet.create({
     minHeight: MIN_TOUCH_TARGET,
     justifyContent: 'center',
     alignItems: 'center',
-    borderRadius: 4,
+    borderRadius: 12,
     backgroundColor: colors.primary,
     marginTop: spacing.lg,
   },

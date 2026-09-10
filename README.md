@@ -37,8 +37,10 @@ la variante release en la guía de Android.
 - Primer inicio: crear un usuario local con su nombre.
 - Captura: registrar sitios con coordenadas opcionales; elegir equipo existente
   o crear uno al guardar la primera observación; conservar su historial.
-- Agente: texto, cámara y grabación; QVAC con MedPsy, VisionPsy + proyector,
-  Whisper y traducción es↔en; revisión editable antes de guardar.
+- Agente: chat principal con orb animado, voz local en vivo y envío automático,
+  respuestas carácter por carácter y revisión editable de placas antes de enviarlas.
+  QVAC con MedPsy, VisionPsy + proyector, Whisper/Silero y traducción es↔en.
+  Consulta [la interfaz de captura](docs/agent-capture-ui.md).
 - Persistencia: guardar los turnos antes de inferir, recuperar la última
   conversación y confirmar observaciones de forma atómica e idempotente.
 - Tablero/mapa: leer los datos locales. Descargar mapa base requiere un estilo

@@ -1,3 +1,4 @@
+import { colors } from '../../../lib/theme';
 import { useState } from 'react';
 import { View, Text, TextInput } from 'react-native';
 import { isSyncConfigured } from '../../../services/sync/config';
@@ -12,17 +13,20 @@ import { getSyncToken, setSyncToken } from '../../../services/sync/session';
  * credential field: `setSyncToken`/`getSyncToken` are plain module functions
  * (services/sync/session.ts), not React state, so the icon button reads
  * whatever was last typed here with no state shared between the two.
+ *
+ * The "Sincronización" title lives beside the icon button in the dashboard's
+ * top bar (features/dashboard/ui/DashboardScreen.tsx), not here, per product
+ * decision — one title for the whole sync affordance, not one per piece.
  */
 export function SyncPanel() {
   const [token, setToken] = useState(getSyncToken);
   return <View style={{ padding: 16, gap: 8 }}>
-    <Text style={{ fontSize: 18 }}>Sincronización</Text>
     {isSyncConfigured() ? <>
-      <Text>La credencial se conserva solo mientras la aplicación está abierta.</Text>
+      <Text style={{ color: colors.onSurfaceVariant }}>La credencial se conserva solo mientras la aplicación está abierta.</Text>
       <TextInput accessibilityLabel="Credencial de sincronización" placeholder="Credencial" secureTextEntry
         autoCapitalize="none" autoCorrect={false} value={token}
         onChangeText={value => { setToken(value); setSyncToken(value); }}
-        style={{ borderWidth: 1, padding: 12 }} />
-    </> : <Text>Sin servidor configurado. Captura disponible sin conexión.</Text>}
+        placeholderTextColor={colors.onSurfaceVariant} style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 12, padding: 12, color: colors.onSurface, backgroundColor: colors.surface }} />
+    </> : <Text style={{ color: colors.onSurfaceVariant }}>Sin servidor configurado. Captura disponible sin conexión.</Text>}
   </View>;
 }

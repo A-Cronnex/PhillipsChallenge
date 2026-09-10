@@ -17,6 +17,11 @@ describe('assertSelfHostedStyleUrl', () => {
     'https://demotiles.maplibre.org/style.json',
     'https://tile.openstreetmap.org/style.json',
     'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+    // OpenFreeMap's data/styles are used, but only self-hosted — its own
+    // hosted endpoints are a third-party CDN (docs/maps.md §4).
+    'https://tiles.openfreemap.org/styles/liberty',
+    'https://tiles.openfreemap.org/planet',
+    'https://assets.openfreemap.com/fonts/ofm/Noto%20Sans%20Regular/0-255.pbf',
   ])('rejects %s', (url) => {
     expect(() => assertSelfHostedStyleUrl(url)).toThrow(CloudTileProviderError);
   });

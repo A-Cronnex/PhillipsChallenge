@@ -1,5 +1,6 @@
 import { MaterialIcons } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
+import { colors } from '../../lib/theme';
 
 /**
  * Primary sections.
@@ -15,7 +16,10 @@ import { Tabs } from 'expo-router';
  */
 export default function TabsLayout() {
   return (
-    <Tabs>
+    <Tabs screenOptions={{ headerStyle: { backgroundColor: colors.background }, headerTintColor: colors.onSurface,
+      headerShadowVisible: false, sceneStyle: { backgroundColor: colors.background },
+      tabBarActiveTintColor: colors.primary, tabBarInactiveTintColor: colors.onSurfaceVariant,
+      tabBarStyle: { backgroundColor: colors.surface, borderTopColor: colors.border }, tabBarHideOnKeyboard: true }}>
       <Tabs.Screen
         name="dashboard/index"
         options={{
@@ -29,6 +33,7 @@ export default function TabsLayout() {
         name="capture/index"
         options={{
           title: 'Captura',
+          headerShown: false,
           tabBarIcon: ({ color, size }) => (
             <MaterialIcons name="mic" size={size} color={color} />
           ),

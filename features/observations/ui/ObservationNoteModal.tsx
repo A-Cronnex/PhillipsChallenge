@@ -86,7 +86,7 @@ const styles = StyleSheet.create({
     minHeight: MIN_TOUCH_TARGET,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 4,
+    borderRadius: 12,
     backgroundColor: colors.primary,
   },
   closeButtonText: { ...typography.titleMedium, color: colors.onPrimary },

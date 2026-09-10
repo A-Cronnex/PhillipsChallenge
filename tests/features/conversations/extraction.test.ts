@@ -11,7 +11,6 @@ describe('parseExtraction', () => {
     values: [
       { field: 'brand', value: 'Philips', status: 'confirmed', confidence: 'high' },
     ],
-    followUpQuestion: '¿Cuántos equipos hay?',
   };
 
   it('accepts a well-formed payload', () => {
@@ -19,7 +18,6 @@ describe('parseExtraction', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.extraction.values).toHaveLength(1);
-    expect(result.extraction.followUpQuestion).toBe('¿Cuántos equipos hay?');
   });
 
   it.each([null, undefined, 'text', 42, []])(
@@ -30,7 +28,7 @@ describe('parseExtraction', () => {
   );
 
   it('rejects a payload with no values array', () => {
-    expect(parseExtraction({ followUpQuestion: 'hola' }).ok).toBe(false);
+    expect(parseExtraction({ note: 'hola' }).ok).toBe(false);
   });
 
   it('drops an invented field name and reports it', () => {
@@ -107,13 +105,6 @@ describe('parseExtraction', () => {
     expect(result.extraction.values.map((v) => v.field)).toEqual(['brand', 'modality']);
     expect(result.rejected).toHaveLength(1);
   });
-
-  it('treats an empty follow-up question as absent', () => {
-    const result = parseExtraction({ values: [], followUpQuestion: '   ' });
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.extraction.followUpQuestion).toBeNull();
-  });
 });
 
 describe('normalizeExtraction', () => {
@@ -123,7 +114,6 @@ describe('normalizeExtraction', () => {
       values: [
         { field: 'brand', value: 'maybe Philips?', status: 'unknown', confidence: 'low' },
       ],
-      followUpQuestion: null,
     });
 
     expect(normalized.values[0].value).toBeNull();
@@ -135,9 +125,20 @@ describe('normalizeExtraction', () => {
       values: [
         { field: 'brand', value: 'Philips', status: 'confirmed', confidence: 'high' },
       ],
-      followUpQuestion: null,
     });
 
     expect(normalized.values[0].value).toBe('Philips');
+  });
+});
+
+describe('parseExtraction ignores stray top-level keys', () => {
+  it('does not carry an unexpected "reasoning" key into the extraction', () => {
+    const result = parseExtraction({
+      reasoning: 'quantity: three -> 3. brand: Philips.',
+      values: [{ field: 'brand', value: 'Philips', status: 'confirmed', confidence: 'high' }],
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.extraction).not.toHaveProperty('reasoning');
   });
 });

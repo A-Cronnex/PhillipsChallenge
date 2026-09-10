@@ -49,6 +49,14 @@ export interface ConversationTurn {
   /** Local file path of an image or audio artifact, when there was one. */
   reference?: string | null;
   at: string;
+  /**
+   * Agent turns only: a recap of every field known once this turn was
+   * produced, e.g. "Hasta ahora registré — la marca: Philips." Rendered as a
+   * small indicator above the turn's own text, never inside it (product
+   * requirement, 2026-09-10) — it is a status snapshot, not something the
+   * agent "said".
+   */
+  capturedSummary?: string | null;
 }
 
 export interface ConversationState {
@@ -62,6 +70,8 @@ export interface ConversationState {
   pendingField: CaptureField | null;
   /** Set when inference failed, so the UI can offer retry (docs/ai-agent.md §13). */
   lastError: string | null;
+  /** Local-only recovery reference. Proposed image values are not applied yet. */
+  pendingImagePath?: string | null;
 }
 
 function emptyFieldState(field: CaptureField): FieldState {

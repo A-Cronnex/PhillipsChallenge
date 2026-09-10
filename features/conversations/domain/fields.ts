@@ -93,7 +93,9 @@ export const CAPTURE_FIELD_SPECS: Record<CaptureField, CaptureFieldSpec> = {
     field: 'country',
     kind: 'text',
     languageSensitive: true,
-    required: false,
+    // Required alongside siteName and city: a visit record must say where the
+    // hospital is, not just its name (product requirement, 2026-09-10).
+    required: true,
     visionReadable: false,
     label: 'el país',
   },
@@ -101,7 +103,7 @@ export const CAPTURE_FIELD_SPECS: Record<CaptureField, CaptureFieldSpec> = {
     field: 'city',
     kind: 'text',
     languageSensitive: true,
-    required: false,
+    required: true,
     visionReadable: false,
     label: 'la ciudad',
   },

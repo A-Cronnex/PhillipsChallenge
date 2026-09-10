@@ -13,10 +13,12 @@ import {
   UNKNOWN_AGE_BUCKET,
   ageBucketFor,
   computeDashboardMetrics,
+  confidenceScore,
   daysBetween,
   estimatedAge,
   missingFields,
   unitsOf,
+  type ConfidenceBreakdown,
   type ObservationFact,
 } from '../../../features/dashboard/domain/metrics';
 
@@ -320,6 +322,47 @@ describe('computeDashboardMetrics — per site', () => {
       'Hospital Alfa',
       'Hospital Beta',
     ]);
+  });
+});
+
+describe('confidenceScore', () => {
+  function breakdown(overrides: Partial<ConfidenceBreakdown> = {}): ConfidenceBreakdown {
+    return { high: 0, medium: 0, low: 0, unrated: 0, ...overrides };
+  }
+
+  it('returns 0 for an empty breakdown rather than dividing by zero', () => {
+    expect(confidenceScore(breakdown())).toBe(0);
+  });
+
+  it('scores an all-high breakdown at 100', () => {
+    expect(confidenceScore(breakdown({ high: 5 }))).toBe(100);
+  });
+
+  it('scores an all-unrated breakdown at 0, not excluded from the average', () => {
+    expect(confidenceScore(breakdown({ unrated: 5 }))).toBe(0);
+  });
+
+  it('weighs medium and low between high and unrated', () => {
+    expect(confidenceScore(breakdown({ high: 1, low: 1 }))).toBe(67);
+  });
+});
+
+describe('computeDashboardMetrics — per-site confidence', () => {
+  it('breaks down confidence per site, not just globally', () => {
+    const metrics = computeDashboardMetrics(
+      [
+        fact({ observationId: 'a', siteId: 'site-1', overallConfidence: 'high' }),
+        fact({ observationId: 'b', siteId: 'site-1', overallConfidence: 'low' }),
+        fact({ observationId: 'c', siteId: 'site-2', overallConfidence: 'high' }),
+      ],
+      TODAY
+    );
+
+    const site1 = metrics.sites.find((site) => site.siteId === 'site-1');
+    const site2 = metrics.sites.find((site) => site.siteId === 'site-2');
+
+    expect(site1?.byConfidence).toEqual({ high: 1, medium: 0, low: 1, unrated: 0 });
+    expect(site2?.byConfidence).toEqual({ high: 1, medium: 0, low: 0, unrated: 0 });
   });
 });
 

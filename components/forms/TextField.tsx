@@ -60,7 +60,7 @@ const styles = StyleSheet.create({
     minHeight: MIN_TOUCH_TARGET,
     borderWidth: 1,
     borderColor: colors.outline,
-    borderRadius: 4,
+    borderRadius: 12,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     marginTop: spacing.sm,

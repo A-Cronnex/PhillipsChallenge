@@ -206,6 +206,8 @@ export interface SiteMetrics {
   oldestEquipmentAge: number | null;
   /** Observations here missing at least one completeness field. */
   incompleteObservations: number;
+  /** Same breakdown as `DashboardMetrics.byConfidence`, scoped to this site — feeds the map's "customer summary" (docs/maps.md). */
+  byConfidence: ConfidenceBreakdown;
 }
 
 export interface ConfidenceBreakdown {
@@ -214,6 +216,49 @@ export interface ConfidenceBreakdown {
   low: number;
   /** Observations with no overall confidence derived. Not the same as low. */
   unrated: number;
+}
+
+function emptyConfidenceBreakdown(): ConfidenceBreakdown {
+  return { high: 0, medium: 0, low: 0, unrated: 0 };
+}
+
+function bumpConfidence(
+  breakdown: ConfidenceBreakdown,
+  level: ConfidenceLevel | null
+): void {
+  if (level === null) breakdown.unrated += 1;
+  else breakdown[level] += 1;
+}
+
+/**
+ * PROPOSED weighting for `confidenceScore` — no document defines one. "High"
+ * counts in full, "medium"/"low" are discounted proportionally, and
+ * "unrated" counts as zero rather than being excluded: an unrated
+ * observation is a data-quality gap, not a neutral data point, so it should
+ * pull the score down rather than vanish from the average.
+ */
+export const CONFIDENCE_WEIGHTS: Record<keyof ConfidenceBreakdown, number> = {
+  high: 1,
+  medium: 0.66,
+  low: 0.33,
+  unrated: 0,
+};
+
+/**
+ * A single 0–100 number summarizing a set of observations' confidence, for
+ * the map's "customer summary" radial gauge (docs/maps.md). Returns 0 for an
+ * empty breakdown rather than dividing by zero.
+ */
+export function confidenceScore(breakdown: ConfidenceBreakdown): number {
+  const total =
+    breakdown.high + breakdown.medium + breakdown.low + breakdown.unrated;
+  if (total === 0) return 0;
+  const weighted =
+    breakdown.high * CONFIDENCE_WEIGHTS.high +
+    breakdown.medium * CONFIDENCE_WEIGHTS.medium +
+    breakdown.low * CONFIDENCE_WEIGHTS.low +
+    breakdown.unrated * CONFIDENCE_WEIGHTS.unrated;
+  return Math.round((weighted / total) * 100);
 }
 
 export interface DashboardMetrics {
@@ -336,8 +381,7 @@ export function computeDashboardMetrics(
     ageCount.units += units;
     ages.set(bucket, ageCount);
 
-    if (fact.overallConfidence === null) byConfidence.unrated += 1;
-    else byConfidence[fact.overallConfidence] += 1;
+    bumpConfidence(byConfidence, fact.overallConfidence);
 
     const missing = missingFields(fact, referenceYear);
     for (const field of missing) missingByField[field] += 1;
@@ -345,6 +389,8 @@ export function computeDashboardMetrics(
 
     const existing = sites.get(fact.siteId);
     if (existing === undefined) {
+      const siteConfidence = emptyConfidenceBreakdown();
+      bumpConfidence(siteConfidence, fact.overallConfidence);
       sites.set(fact.siteId, {
         siteId: fact.siteId,
         name: fact.siteName,
@@ -358,6 +404,7 @@ export function computeDashboardMetrics(
         modalitySet: new Set(modality === null ? [] : [modality]),
         oldestEquipmentAge: age,
         incompleteObservations: missing.length > 0 ? 1 : 0,
+        byConfidence: siteConfidence,
       });
     } else {
       existing.observations += 1;
@@ -375,6 +422,7 @@ export function computeDashboardMetrics(
             : Math.max(existing.oldestEquipmentAge, age);
       }
       if (missing.length > 0) existing.incompleteObservations += 1;
+      bumpConfidence(existing.byConfidence, fact.overallConfidence);
     }
   }
 

@@ -39,7 +39,7 @@ export function backgroundOnlyStyle(): StyleSpecification {
       {
         id: BACKGROUND_LAYER_ID,
         type: 'background',
-        paint: { 'background-color': '#E8E6E1' },
+        paint: { 'background-color': '#0F1824' },
       },
     ],
   };

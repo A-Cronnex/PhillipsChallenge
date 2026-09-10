@@ -46,8 +46,8 @@ El plugin fija `arm64-v8a`. Los modelos locales de esta aplicación no están
 validados en emuladores. RAM suficiente para Android no garantiza RAM suficiente
 para los modelos: la memoria y latencia deben medirse en el teléfono objetivo.
 
-1. Activa Opciones de desarrollador tocando siete veces Número de compilación.
-2. Activa Depuración USB.
+1. En el **Pixel 10a**, abre **Ajustes → Información del teléfono → Número de compilación**. Tócalo siete veces y confirma el PIN si se solicita.
+2. Abre **Ajustes → Sistema → Opciones para desarrolladores → Depuración USB** y actívala.
 3. Conecta un cable USB con transferencia de datos y acepta la huella RSA.
 4. Ejecuta `adb devices -l`. Debe aparecer con estado `device`.
 
@@ -158,36 +158,38 @@ si contiene datos pendientes: desinstalar borra su almacenamiento local.
 
 ## 6. Primer uso y recorrido de comprobación
 
-1. Escribe tu nombre en la pantalla inicial. Se crea el usuario local de captura;
-   este registro no es una sesión autenticada contra el servidor.
-2. En **Captura**, pulsa **Registrar sitio**. Nombre obligatorio; coordenadas
-   opcionales, siempre latitud y longitud juntas. Para comprobar el mapa,
-   usa coordenadas conocidas del sitio.
-3. Selecciona el sitio. Revisa la lista de equipos: puedes registrar un equipo o
-   grupo nuevo, o añadir una observación al historial de uno existente. Si marca,
-   modelo y modalidad coinciden con un registro del sitio, selecciona ese equipo
-   para evitar un duplicado. Guarda
-   marca/modelo/modalidad, fecha, cantidad y confianza según lo observado.
-4. Abre **Tablero** y actualiza deslizando hacia abajo. Comprueba las métricas y
-   el estado pendiente. En **Mapa**, actualiza los datos y abre el sitio.
-5. En **Agente**, pulsa **Cargar modelos** con Internet disponible. La preparación
-   inicial carga MedPsy; traducción, visión/proyector y Whisper se cargan al usar
-   cada modalidad. Prueba texto en español, una foto y **Grabar voz → Detener →
-   Transcribir audio grabado** antes de ir al campo sin conexión.
-6. Pulsa **Revisar y guardar**. Revisa/corrige los valores y su confianza, elige
-   un sitio real y el equipo existente o nuevo. Confirma el guardado local.
-   Se conservan los orígenes de los atributos que no modificaste; tus correcciones
-   pasan a ser información reportada por texto.
-7. Cierra y abre la app. Se recupera la última conversación, incluidos turnos
-   fallidos persistidos. Una conversación guardada permite comenzar otra.
-8. Con una APK autónoma y modelos ya descargados, activa modo avión y repite
-   texto, voz, foto, captura manual y reapertura. Verifica que nada dependa de Metro.
-9. Si tienes servidor: provisiona el UUID de usuario y dispositivo mostrado en
-   Tablero, introduce su credencial y pulsa **Sincronizar ahora**. Repite el envío
-   y comprueba que no haya duplicados. Los errores conservan los datos locales.
-10. Para mapa base offline, descarga una región mientras tienes conexión y
-    comprueba esa misma región en modo avión. Descargar modelos, mapas y datos
-    de negocio son operaciones diferentes.
+1. Escribe tu nombre en el primer inicio. Se crea una identidad local; no es
+   una sesión autenticada contra el servidor.
+2. **Captura** abre directamente el chat. Pulsa **Preparar agente** con Internet
+   disponible. MedPsy se prepara primero; Bergamot, VisionPsy + proyector,
+   Whisper y Silero VAD se descargan al utilizar cada modalidad.
+3. Envía texto en español. El orb cambia con la operación y la respuesta aparece
+   carácter por carácter. Con movimiento reducido, aparece completa.
+4. Pulsa el micrófono. Espera **Te estoy escuchando** y comprueba el texto tenue
+   provisional. Pulsa **Terminar grabación y enviar**: el texto definitivo llega
+   al composer y se envía automáticamente. No hay un segundo botón de transcribir.
+5. **Capturar placa con cámara** permite tomar o seleccionar una fotografía.
+   Espera la comprobación de placa. Edita los datos/confianza y pulsa
+   **Aceptar cambios y enviar**; sin esta confirmación no se aplican al chat.
+6. Pulsa **Revisar y guardar observación**. Selecciona o registra el sitio (nombre
+   obligatorio, coordenadas opcionales), selecciona equipo existente o nuevo,
+   revisa fecha, valores y confianza y confirma el guardado local. Las correcciones
+   son reportadas por texto; los valores intactos conservan su origen.
+7. El icono de formulario del encabezado permite captura manual. Los sitios,
+   equipos y observaciones también se crean offline por esta vía.
+8. En **Tablero**, actualiza los datos; en **Mapa**, comprueba los sitios con
+   coordenadas. La observación recién guardada queda pendiente de sincronización.
+9. Reinicia la app para verificar recuperación. Una foto interrumpida se conserva
+   como pendiente de revisión; nunca se confirma al reiniciar.
+10. Antes de salir a campo, prueba todas las modalidades con red. Después, con
+    una APK autónoma y modelos/mapas ya descargados, repite en modo avión.
+    El dev client requiere Metro y no demuestra autonomía offline por sí solo.
+11. Si tienes servidor, provisiona usuario/dispositivo y su credencial; introdúcela
+    en el Tablero y utiliza el icono de sincronización. Repite para verificar
+    idempotencia. No se transmiten fotos, audio ni snapshots mediante este protocolo.
+
+Consulta [el flujo de captura](agent-capture-ui.md) para estados, validación,
+procedencia, accesibilidad y límites del streaming.
 
 ## 7. Errores habituales
 
@@ -224,14 +226,20 @@ si contiene datos pendientes: desinstalar borra su almacenamiento local.
   de la app y deja la resolución al enlazador del sistema, para el que
   `libnativehelper.so` sí es pública. Coste: la instalación ocupa más espacio.
   Requiere prebuild y recompilar; reinstalar la APK anterior no basta.
-- **La cámara no se abre (botón «Foto de la placa» o 📷 del compositor):**
-  defecto conocido y no resuelto. `expo-image-picker` no responde en esta
-  compilación: `requestCameraPermissionsAsync()` no resuelve nunca, y al
-  saltarla tampoco resuelve `launchCameraAsync()`, sin excepción ni actividad
-  de cámara en `logcat`. No es un problema de configuración: el permiso
-  `CAMERA` está concedido (`adb shell dumpsys package com.hei.app`) y el
-  manifiesto fusionado incluye `<queries>` con `android.media.action.IMAGE_CAPTURE`.
-  Mientras tanto, la captura por voz y por texto funcionan.
+- **La cámara o el selector no responde:** había un bloqueo en las promesas de
+  `expo-image-picker` en una build anterior del Pixel. La nueva integración pide
+  el permiso Android con `PermissionsAndroid` y ofrece cancelación, límites de
+  espera y selección de archivo como alternativa. Esto no certifica que la
+  cámara/VisionPsy funcionen juntos: sigue siendo necesaria una foto real de placa.
+- **`NoSuchMethodError` en `FontLoaderModule` / `getDirectConverter`:** se detectó
+  físicamente `expo-font@57.0.3` como dependencia de `@expo/vector-icons` dentro
+  de Expo 54. `package.json` ahora declara `expo-font~14.0.12`. Comprueba
+  `npm ls expo-font`, instala con `npm ci` y recompila; reiniciar Metro no corrige
+  una APK que contiene la clase nativa incompatible.
+- **Voz en vivo no disponible tras actualizar JS:** `react-native-audio-api` es
+  código nativo. Ejecuta `npm ci`, `npm run prebuild:android` y
+  `npx expo run:android --device`; una recarga JS no basta. Whisper necesita
+  además Silero VAD descargado, no solo el modelo de transcripción.
 - **Sincronización devuelve 401:** revisa token, UUID de dispositivo y
   `SYNC_DEVICE_CREDENTIALS`; vuelve a introducir el token tras reiniciar la app.
 - **Sincronización rechaza referencias:** el usuario debe existir también en
@@ -261,12 +269,17 @@ la pila completas. Los errores de JavaScript aparecen bajo `ReactNativeJS`.
 
 ## 8. Alcance de la verificación
 
-Se ejecutaron las pruebas automatizadas, una integración con SQLite real, el
-chequeo de tipos, el prebuild Android y el empaquetado JavaScript Android.
-La validación física de QVAC, permisos, memoria, cámara, grabación y modo avión
-sigue pendiente: al comprobar ADB no había ningún teléfono conectado.
-Consulta [implementation-status.md](implementation-status.md) para los resultados
-finales de compilación y las dependencias de despliegue.
+Actualización del 10 de septiembre de 2026: se ejecutaron pruebas automatizadas,
+SQLite real, TypeScript, prebuild y `assembleDebug` ARM64. Se instaló la build en
+un **Pixel 10a** conectado/autorizado y se verificó el arranque con fuentes
+corregidas, el tema oscuro, el chat recuperado, los controles superiores y el
+composer por encima del teclado. La suite actual pasa 571 pruebas en 55 suites.
+
+Las pruebas con mocks cubren voz parcial/final, presentación carácter por
+carácter, detección/revisión de placa, confirmación y errores. No sustituyen
+la prueba conjunta de micrófono/Whisper/Silero, cámara/VisionPsy con placas
+reales, memoria, latencia ni una APK autónoma en modo avión. Esas comprobaciones
+siguen pendientes y no deben darse por aprobadas por compilar la app.
 
 Referencias: [QVAC para Expo](https://docs.qvac.tether.io/tutorials/expo/),
 [requisitos QVAC](https://docs.qvac.tether.io/js-ts-sdk/),

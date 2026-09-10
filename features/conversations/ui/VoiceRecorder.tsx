@@ -1,5 +1,6 @@
+import { AppButton as Button } from '../../../components/ui/AppButton';
 import { useEffect, useRef, useState } from 'react';
-import { AppState, Button, Text, View } from 'react-native';
+import { AppState, Text, View } from 'react-native';
 import { AudioModule, RecordingPresets, setAudioModeAsync, useAudioRecorder, useAudioRecorderState } from 'expo-audio';
 import { retainArtifact } from '../../../services/capture/artifacts';
 
