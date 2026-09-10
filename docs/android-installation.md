@@ -181,6 +181,13 @@ si contiene datos pendientes: desinstalar borra su almacenamiento local.
   RAM. La UI conserva la captura para reintentar/revisar; usa Captura manual si
   la inferencia no está disponible. El SDK se carga de forma diferida.
 - **Permiso de cámara/micrófono denegado:** habilítalo en Ajustes → Aplicaciones.
+- **`NoClassDefFoundError: Lexpo/modules/kotlin/types/AnyTypeCache`:** una
+  dependencia de Expo quedó en una versión de otro SDK. `expo-audio` declara
+  `expo-asset` como par con rango `*`, y npm puede instalar la última versión
+  publicada (57.x), compilada contra un `expo-modules-core` más nuevo que el de
+  SDK 54. `package.json` fija `expo-asset` en `overrides`. Si reaparece, ejecuta
+  `npx expo-modules-autolinking resolve -p android -j` y comprueba que
+  `expo-asset` resuelva a 12.0.x; después reinstala y vuelve a compilar.
 - **Sincronización devuelve 401:** revisa token, UUID de dispositivo y
   `SYNC_DEVICE_CREDENTIALS`; vuelve a introducir el token tras reiniciar la app.
 - **Sincronización rechaza referencias:** el usuario debe existir también en
