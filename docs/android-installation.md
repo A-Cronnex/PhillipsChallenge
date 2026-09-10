@@ -204,6 +204,14 @@ si contiene datos pendientes: desinstalar borra su almacenamiento local.
   de la app y deja la resolución al enlazador del sistema, para el que
   `libnativehelper.so` sí es pública. Coste: la instalación ocupa más espacio.
   Requiere prebuild y recompilar; reinstalar la APK anterior no basta.
+- **La cámara no se abre (botón «Foto de la placa» o 📷 del compositor):**
+  defecto conocido y no resuelto. `expo-image-picker` no responde en esta
+  compilación: `requestCameraPermissionsAsync()` no resuelve nunca, y al
+  saltarla tampoco resuelve `launchCameraAsync()`, sin excepción ni actividad
+  de cámara en `logcat`. No es un problema de configuración: el permiso
+  `CAMERA` está concedido (`adb shell dumpsys package com.hei.app`) y el
+  manifiesto fusionado incluye `<queries>` con `android.media.action.IMAGE_CAPTURE`.
+  Mientras tanto, la captura por voz y por texto funcionan.
 - **Sincronización devuelve 401:** revisa token, UUID de dispositivo y
   `SYNC_DEVICE_CREDENTIALS`; vuelve a introducir el token tras reiniciar la app.
 - **Sincronización rechaza referencias:** el usuario debe existir también en
