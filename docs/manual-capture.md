@@ -125,7 +125,16 @@ must not interfere with capture (`CLAUDE.md` §13).
   [sync-api.md §14](sync-api.md#14-conexion-operativa-del-mvp).
 - **Sites can be created offline.** The form offers `SiteCreator`, including
   optional coordinates, duplicate checking and an atomic pending sync record.
-- **No editing or listing of saved observations.** Capture only.
+- **Listing exists; editing and deleting do not.** A site's observation
+  history is reachable from the map's site panel
+  (`features/observations/ui/ObservationListScreen.tsx`, `app/site/[siteId].tsx`),
+  with search, sort, and a per-observation note viewer. The card's edit and
+  delete actions are visible but stubbed: editing has no flow to open (this
+  screen only reads), and deleting is blocked by the same unresolved
+  soft-delete decision that keeps the server rejecting
+  `operation: 'delete'` (`docs/database.md` §16, `CLAUDE.md` §18) — pressing
+  either says so rather than silently doing nothing or writing past the
+  append-only rule in `docs/domain-model.md` §14.
 - **The other three sections** (Dashboard, Map, Conversations) are not declared
   in the tab layout, so the tab bar does not advertise screens that do not
   exist.

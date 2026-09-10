@@ -7,6 +7,7 @@
  */
 import type { SyncStatus } from '../../../types/domain';
 import type { NewObservation } from '../domain/observation';
+import type { ObservationRecord } from '../domain/observation-record';
 
 export interface SavedObservation {
   id: string;
@@ -29,4 +30,12 @@ export interface ObservationRepository {
     observation: NewObservation,
     initialSyncStatus: SyncStatus
   ): Promise<SavedObservation>;
+
+  /**
+   * Every observation recorded at a site, for the observation-history screen
+   * (docs/manual-capture.md §8 — previously "no listing of saved
+   * observations"). Never performs a network call; reads what is locally
+   * persisted, including rows not yet synchronized.
+   */
+  listBySite(siteId: string): Promise<ObservationRecord[]>;
 }
