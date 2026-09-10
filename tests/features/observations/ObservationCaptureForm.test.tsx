@@ -59,6 +59,16 @@ function buildRepositories(options: {
         throw new Error('capture must not read map data');
       },
     },
+    dashboard: {
+      loadObservationFacts: () => {
+        throw new Error('capture must not read dashboard data');
+      },
+    },
+    syncState: {
+      countByStatus: () => {
+        throw new Error('capture must not read synchronization state');
+      },
+    },
     mapRegions: {
       listRegions: () => {
         throw new Error('capture must not read map cache state');
@@ -70,6 +80,35 @@ function buildRepositories(options: {
         throw new Error('capture must not write map cache state');
       },
     },
+    // Capture must persist locally and never synchronize (CLAUDE.md §6): the
+    // save flow must not block on, or even reach, the network. These throw so
+    // an accidental call fails loudly instead of quietly making capture
+    // network-dependent.
+    syncQueue: {
+      releaseStaleSyncing: () => {
+        throw new Error('capture must not run synchronization');
+      },
+      claimPendingChanges: () => {
+        throw new Error('capture must not run synchronization');
+      },
+      markSynchronized: () => {
+        throw new Error('capture must not run synchronization');
+      },
+      markFailed: () => {
+        throw new Error('capture must not run synchronization');
+      },
+      releaseToPending: () => {
+        throw new Error('capture must not run synchronization');
+      },
+    },
+    deviceIdentity: {
+      getOrCreateDeviceId: () => {
+        throw new Error('capture must not need a device identity');
+      },
+    },
+    // No transport at all, matching the shipped configuration: capture has to
+    // work with no sync server in existence.
+    syncTransport: null,
     observations: {
       async save(observation, syncStatus) {
         if (options.saveError) throw options.saveError;

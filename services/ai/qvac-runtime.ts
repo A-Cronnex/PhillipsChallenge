@@ -147,12 +147,17 @@ export function createQvacRuntime(options: QvacRuntimeOptions): AiRuntime {
     ): Promise<AgentExtraction> {
       // NOTE: the Spanish→English translation bridge described in
       // docs/tech-stack.md §7.2 is NOT applied here yet. See
-      // docs/ai-agent-implementation.md §4 — MedPsy is prompted directly, and
-      // the user's original text is what gets persisted either way.
+      // docs/ai-agent-implementation.md §4 — MedPsy is prompted directly in
+      // the user's language.
+      //
+      // Either way the storage rule in §7.2 holds without depending on the
+      // bridge: the prompt asks for verbatim values in the user's language,
+      // and `features/conversations/domain/language.ts` enforces it against
+      // what the user actually said before anything is recorded.
       return complete(
         MODEL_REGISTRY_NAMES.text,
         'text',
-        textExtractionPrompt(request.text, request.targetFields)
+        textExtractionPrompt(request.text, request.targetFields, request.language)
       );
     },
 
@@ -162,7 +167,7 @@ export function createQvacRuntime(options: QvacRuntimeOptions): AiRuntime {
       return complete(
         MODEL_REGISTRY_NAMES.vision,
         'vision',
-        imageExtractionPrompt(request.targetFields),
+        imageExtractionPrompt(request.targetFields, request.language),
         request.imagePath
       );
     },

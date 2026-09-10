@@ -34,6 +34,14 @@ Scaffolded and running under Expo SDK 54. Implemented so far:
   equipment, plus offline region downloads (`docs/maps.md`).
 - `features/conversations/` + `services/ai/` — local AI capture agent with the
   vision-first flow (`docs/ai-agent-implementation.md`).
+- `features/dashboard/` — local analytics over captured observations,
+  computed on-device with no network dependency (`docs/dashboard.md`).
+- `features/synchronization/` + `services/sync/` + `server/` — the upload
+  half of synchronization: the device queue, the `POST /v1/sync` endpoint, and
+  the client-wins conflict resolution (`docs/sync-api.md`). **Disabled by
+  default** — no sync server is configured, so records stay `pending`, which is
+  the correct state for a device with nowhere to sync to. The download
+  direction is not implemented; `docs/sync-api.md` §2 explains what blocks it.
 
 **MapLibre and QVAC are both installed, so section 4 applies: a development
 build is required and Expo Go will not work.**
@@ -47,10 +55,26 @@ physical device; the checklist is in `docs/ai-agent-implementation.md` §10.
 
 ## 3. Environment Configuration
 
-No backend exists yet (see `docs/tech-stack.md`, section 5). Once one is
-chosen and stood up, its connection details will live in a `.env` file
-(not committed) referenced from `app.config.ts`. This section will be
-updated when that decision is confirmed.
+The backend is confirmed as **Node.js + PostgreSQL** and lives in `server/`
+(`docs/tech-stack.md` §5). It is not deployed anywhere, so the app ships with
+synchronization **disabled**.
+
+### 3.1 Mobile app
+
+`services/sync/config.ts` holds `syncServerConfig`, which ships as
+`{ mode: 'disabled' }`. No URL and no credential is committed. When a
+deployment exists, its address belongs in a `.env` file (not committed) read
+through `app.config.ts`, and this section will be updated with the variable
+names.
+
+The app enforces `https://` for any non-loopback sync URL — hospital data must
+not travel unencrypted.
+
+### 3.2 Server
+
+See `server/README.md`. It needs `DATABASE_URL` in the environment (no
+default), and it **refuses every request until an authentication protocol is
+configured** — that protocol is still an open decision (`CLAUDE.md` §18).
 
 ## 4. Important: This Project Needs a Development Build, Not Expo Go
 
@@ -163,8 +187,11 @@ schema per `docs/database.md`.
 | `npx expo start --dev-client` | Start Metro for the custom dev client. |
 | `npx expo run:ios` / `run:android` | Build and run natively. |
 | `npx expo prebuild` | Regenerate native `ios/`/`android/` folders after native-dependency changes. |
-| `npm test` | Run the Jest suite (`jest-expo` preset). |
+| `npm test` | Run the Jest suite (`jest-expo` preset) — covers the app and the server's pure layers. |
 | `npm run typecheck` | Type-check with `tsc --noEmit`. |
+| `npm install --prefix server` | Install the sync server's own dependencies (`pg`). Kept out of the app's dependency tree. |
+| `npm run migrate --prefix server` | Apply the central Postgres schema (needs `DATABASE_URL`). |
+| `npm start --prefix server` | Run the sync server (after `npm run build --prefix server`). |
 
 ## 8. Troubleshooting
 
@@ -181,6 +208,9 @@ schema per `docs/database.md`.
 
 ## 9. What's Still Undecided
 
-Backend, authentication, and several other items are open decisions —
-see `docs/tech-stack.md` section 7 and `CLAUDE.md` section 18. This
-README will be updated as those are confirmed.
+Authentication and several other items remain open decisions — see
+`docs/tech-stack.md` §9, `docs/sync-api.md` §13, and `CLAUDE.md` §18. The
+backend technology itself is no longer among them (§3 above).
+
+The one that blocks deployment: **no authentication protocol is chosen**, so
+the sync server refuses every request by default.

@@ -159,4 +159,14 @@ describe('migration registry', () => {
     const names = migrations.map((m) => m.name);
     expect(new Set(names).size).toBe(names.length);
   });
+
+  it('keeps local-settings as migration 2, appended after the initial schema', () => {
+    // The registry is append-only: an already-shipped migration must never be
+    // edited or reordered, or devices that applied it will report the same
+    // `user_version` for two different schemas. Migration 2 adds the
+    // `local_settings` table that holds the sync device id
+    // (database/migrations/002-local-settings.ts).
+    expect(migrations[0]).toMatchObject({ version: 1, name: 'initial-schema' });
+    expect(migrations[1]).toMatchObject({ version: 2, name: 'local-settings' });
+  });
 });

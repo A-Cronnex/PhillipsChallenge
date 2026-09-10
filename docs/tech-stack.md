@@ -76,10 +76,17 @@ This is consistent with MapLibre as the renderer above — MapLibre just
 displays whatever tile source you give it; self-hosting only changes
 where those tiles come from, not the rendering library.
 
-## 5. Backend — Proposed, Pending Confirmation
+## 5. Backend — Confirmed: Node.js + PostgreSQL (Option A)
 
-No backend exists yet. Two realistic options, both compatible with the
-offline-first / explicit-sync rules in `docs/offline-sync.md`:
+**Confirmed.** Option A below is the decision. The implementation lives in
+`server/`, and the endpoint it serves is specified in `docs/sync-api.md`.
+
+What "confirmed" covers: the runtime (Node.js), the central database
+(PostgreSQL), and the synchronization endpoint's contract. What it does **not**
+cover, and what remains open: the authentication protocol, hosting and
+deployment configuration, and backup policy — all still listed in §9.
+
+Two options were considered:
 
 ### Option A — Node.js API + PostgreSQL (recommended default)
 
@@ -96,11 +103,14 @@ offline-first / explicit-sync rules in `docs/offline-sync.md`:
 - Less control over custom conflict-resolution logic; may need to model
   `sync_records` around the provider's own change-tracking primitives.
 
-**Recommendation:** start with Option A if the synchronization and
-conflict-resolution rules in `docs/offline-sync.md` need to stay fully
-custom (which the current documentation suggests, given the emphasis on
-explicit, non-destructive conflict handling). Confirm before scaffolding
-any backend code.
+**Decision: Option A**, for the reason anticipated above — the conflict
+handling in `docs/offline-sync.md` §8 and §11 is specific enough (client-wins,
+with the replaced state archived rather than discarded) that modelling it
+around a provider's own change-tracking primitives would have meant fitting the
+policy to the tool. No web framework was adopted: the endpoint is one path with
+one method and is served by Node's built-in `http` module, with the handler
+written framework-agnostically so Express or Fastify can be introduced later
+without touching it (`server/README.md`).
 
 ## 6. Local AI Runtime — QVAC (Confirmed)
 

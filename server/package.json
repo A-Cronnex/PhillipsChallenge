@@ -1,0 +1,24 @@
+{
+  "name": "hospital-equipment-intelligence-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Central sync server for the Hospital Equipment Intelligence app. Node.js + PostgreSQL.",
+  "main": "dist/server/src/main.js",
+  "scripts": {
+    "build": "tsc -p .",
+    "typecheck": "tsc -p . --noEmit",
+    "start": "node dist/server/src/main.js",
+    "migrate": "psql \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f migrations/001_initial_schema.sql",
+    "verify": "node dist/server/scripts/integration-check.js"
+  },
+  "dependencies": {
+    "pg": "^8.13.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "~5.9.2"
+  },
+  "engines": {
+    "node": ">=20.17"
+  }
+}

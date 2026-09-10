@@ -203,13 +203,26 @@ The implementation must define:
 
 ## 16. Open Decisions
 
-- Exact SQLite library.
-- Central database technology.
-- Server schema.
+Resolved since this list was written:
+
+- **Central database technology** → PostgreSQL (`docs/tech-stack.md` §5).
+- **Server schema** → `server/migrations/001_initial_schema.sql`; the
+  differences from the local schema, and why, are in `docs/sync-api.md` §6.
+- **Conflict resolution metadata** → `sync_entity_state` (authoritative
+  version and replay key) and `sync_conflicts` (the archived replaced state),
+  both server-side. On the device, the existing `sync_records.server_version` /
+  `local_version` pair is what the protocol uses.
+
+Still open:
+
+- Exact SQLite library — *(in practice `expo-sqlite`, per
+  `docs/tech-stack.md` §3; not re-evaluated.)*
 - Encryption implementation.
-- Data retention policy.
-- Soft-delete strategy.
-- Conflict resolution metadata.
+- Data retention policy — now also covering the server's `sync_conflicts`
+  archive, which grows without bound.
+- Soft-delete strategy. This one now blocks concrete work: the sync endpoint
+  rejects `operation: 'delete'`, and the download direction cannot express a
+  deletion without tombstones (`docs/sync-api.md` §2, §10).
 
 ## 17. Implemented Schema — Migration 001
 
@@ -304,3 +317,24 @@ built.
 It records map cache state only. Downloading a region does not download
 business data (`docs/offline-sync.md` §11), and this table must never be
 read as a statement about which sites or equipment are available offline.
+
+## 18. Implemented Schema — Migration 002
+
+`database/migrations/002-local-settings.ts` adds one table, `local_settings`
+(`key`, `value`, `created_at`, `updated_at`).
+
+It exists for a single current purpose: holding this installation's stable
+device id, which the server uses to tell a retried change from a new one
+(`docs/offline-sync.md` §7). Section 2 above already names "local
+configuration" as something the local database stores, but section 4 lists no
+table for it, and device-level state has no natural home among nine per-entity
+tables.
+
+Two things it deliberately is **not**:
+
+- **Not the sync cursor's home yet.** §17.2 records that the incremental-sync
+  cursor is still proposed. This table gives that decision somewhere to land;
+  it does not make it (`docs/sync-api.md` §2).
+- **Not a place for secrets.** The table is unencrypted like the rest of the
+  database. The device id is a random UUID identifying an installation to the
+  sync server — not a credential (`CLAUDE.md` §15).

@@ -7,18 +7,35 @@
  * (CLAUDE.md §5).
  */
 import { openDatabase } from '../database';
+import {
+  createDashboardRepository,
+  createSyncStateRepository,
+} from '../database/repositories/dashboard-repository';
 import { createMapDataRepository } from '../database/repositories/map-data-repository';
 import { createMapRegionRepository } from '../database/repositories/map-region-repository';
 import { createObservationRepository } from '../database/repositories/observation-repository';
+import { createSettingsRepository } from '../database/repositories/settings-repository';
 import { createSiteRepository } from '../database/repositories/site-repository';
+import { createSyncRepository } from '../database/repositories/sync-repository';
 import { createUserRepository } from '../database/repositories/user-repository';
 import type { UserRepository } from '../features/authentication/application/ports';
+import type {
+  DashboardRepository,
+  SyncStateRepository,
+} from '../features/dashboard/application/ports';
 import type {
   MapDataRepository,
   MapRegionRepository,
 } from '../features/maps/application/ports';
 import type { ObservationRepository } from '../features/observations/application/ports';
 import type { SiteRepository } from '../features/sites/application/ports';
+import type {
+  DeviceIdentityRepository,
+  SyncQueueRepository,
+  SyncTransport,
+} from '../features/synchronization/application/ports';
+import { createHttpSyncTransport } from '../services/sync/http-transport';
+import { isSyncConfigured } from '../services/sync/config';
 import { newId } from './id';
 
 export interface Repositories {
@@ -29,6 +46,22 @@ export interface Repositories {
   mapData: MapDataRepository;
   /** Local map cache state — deliberately not the same port as mapData. */
   mapRegions: MapRegionRepository;
+  /** Aggregated business data for the dashboard. */
+  dashboard: DashboardRepository;
+  /** Synchronization state counts — shown by the dashboard, not owned by it. */
+  syncState: SyncStateRepository;
+  /** The upload queue. Reads and writes `sync_records` only. */
+  syncQueue: SyncQueueRepository;
+  /** This installation's stable device id. */
+  deviceIdentity: DeviceIdentityRepository;
+  /**
+   * `null` while no sync server is configured (services/sync/config.ts).
+   *
+   * Deliberately nullable rather than a stub that always fails: a stub would
+   * mark every queued record `failed`, when the truth is that there is nothing
+   * wrong and nowhere to send them.
+   */
+  syncTransport: SyncTransport | null;
 }
 
 let repositories: Repositories | null = null;
@@ -50,6 +83,11 @@ export async function getRepositories(): Promise<Repositories> {
       users: createUserRepository(db),
       mapData: createMapDataRepository(db),
       mapRegions: createMapRegionRepository(db),
+      dashboard: createDashboardRepository(db),
+      syncState: createSyncStateRepository(db),
+      syncQueue: createSyncRepository(db),
+      deviceIdentity: createSettingsRepository(db, newId),
+      syncTransport: isSyncConfigured() ? createHttpSyncTransport() : null,
     };
     repositories = built;
     return built;

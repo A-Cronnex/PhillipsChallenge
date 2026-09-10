@@ -29,6 +29,34 @@ export interface CaptureFieldSpec {
   /** Whether the observation cannot be completed without it. */
   required: boolean;
   /**
+   * Domain shape of the value, so that business-rule validation of model
+   * output (docs/ai-agent.md §8) can be driven from the field catalogue
+   * instead of a second list that would drift from this one.
+   * See `value-rules.ts`.
+   */
+  kind: 'text' | 'integer';
+  /**
+   * Whether the value is free text that must be persisted in the user's own
+   * language (docs/tech-stack.md §7.2, docs/domain-model.md §6 "Language of
+   * Free-Text Fields").
+   *
+   * MedPsy reasons in English, so anything it *writes* may come back
+   * translated. For these fields the model's job is to locate the value in
+   * what the user said, not to produce it — `language.ts` enforces that.
+   *
+   * `brand` and `model` are excluded on purpose: a manufacturer name and a
+   * model number are language-invariant identifiers, and they are exactly the
+   * values a nameplate photo produces, where there is no user utterance to
+   * check against.
+   *
+   * `modality` is the debatable one. It is included because the database
+   * stores it as free text with no controlled vocabulary yet (migration 001
+   * deliberately has no CHECK on it), so "rayos X" must not silently become
+   * "X-Ray". Revisit if a canonical modality vocabulary is ever confirmed
+   * (CLAUDE.md §18).
+   */
+  languageSensitive: boolean;
+  /**
    * Whether a photograph of the equipment or its nameplate can show this
    * value. Drives §3a: only these fields are worth a photo re-request.
    *
@@ -47,66 +75,88 @@ export interface CaptureFieldSpec {
 export const CAPTURE_FIELD_SPECS: Record<CaptureField, CaptureFieldSpec> = {
   quantity: {
     field: 'quantity',
+    kind: 'integer',
+    languageSensitive: false,
     required: true,
     visionReadable: false,
     label: 'la cantidad de equipos',
   },
   siteName: {
     field: 'siteName',
+    kind: 'text',
+    languageSensitive: true,
     required: true,
     visionReadable: false,
     label: 'el nombre del sitio',
   },
   country: {
     field: 'country',
+    kind: 'text',
+    languageSensitive: true,
     required: false,
     visionReadable: false,
     label: 'el país',
   },
   city: {
     field: 'city',
+    kind: 'text',
+    languageSensitive: true,
     required: false,
     visionReadable: false,
     label: 'la ciudad',
   },
   brand: {
     field: 'brand',
+    kind: 'text',
+    languageSensitive: false,
     required: true,
     visionReadable: true,
     label: 'la marca',
   },
   model: {
     field: 'model',
+    kind: 'text',
+    languageSensitive: false,
     required: false,
     visionReadable: true,
     label: 'el modelo',
   },
   modality: {
     field: 'modality',
+    kind: 'text',
+    languageSensitive: true,
     required: true,
     visionReadable: true,
     label: 'la modalidad',
   },
   estimatedYearsOfUse: {
     field: 'estimatedYearsOfUse',
+    kind: 'integer',
+    languageSensitive: false,
     required: false,
     visionReadable: false,
     label: 'los años de uso estimados',
   },
   estimatedInstallationYear: {
     field: 'estimatedInstallationYear',
+    kind: 'integer',
+    languageSensitive: false,
     required: false,
     visionReadable: true,
     label: 'el año de instalación',
   },
   operationalStatus: {
     field: 'operationalStatus',
+    kind: 'text',
+    languageSensitive: true,
     required: false,
     visionReadable: false,
     label: 'el estado operativo',
   },
   notes: {
     field: 'notes',
+    kind: 'text',
+    languageSensitive: true,
     required: false,
     visionReadable: false,
     label: 'notas adicionales',
@@ -121,8 +171,20 @@ export const VISION_READABLE_FIELDS: CaptureField[] = CAPTURE_FIELDS.filter(
   (field) => CAPTURE_FIELD_SPECS[field].visionReadable
 );
 
+export const LANGUAGE_SENSITIVE_FIELDS: CaptureField[] = CAPTURE_FIELDS.filter(
+  (field) => CAPTURE_FIELD_SPECS[field].languageSensitive
+);
+
 export function isVisionReadable(field: CaptureField): boolean {
   return CAPTURE_FIELD_SPECS[field].visionReadable;
+}
+
+export function isLanguageSensitive(field: CaptureField): boolean {
+  return CAPTURE_FIELD_SPECS[field].languageSensitive;
+}
+
+export function kindOf(field: CaptureField): 'text' | 'integer' {
+  return CAPTURE_FIELD_SPECS[field].kind;
 }
 
 export function labelOf(field: CaptureField): string {

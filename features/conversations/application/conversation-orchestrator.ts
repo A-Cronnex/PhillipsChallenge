@@ -20,8 +20,12 @@ import {
 import {
   normalizeExtraction,
   parseExtraction,
+  type AgentIssue,
   type ExtractionIssue,
 } from '../domain/extraction';
+import { capConfidenceByStatus } from '../domain/confidence';
+import { preserveUserLanguage } from '../domain/language';
+import { validateExtractedValues } from '../domain/value-rules';
 import { labelOf, type CaptureField } from '../domain/fields';
 import {
   decideNextAction,
@@ -35,8 +39,13 @@ export interface TurnResult {
   action: NextAction;
   /** What the agent says next, in the user's language. */
   message: string;
-  /** Model output that failed validation. Surfaced, never silently dropped. */
-  rejected: ExtractionIssue[];
+  /**
+   * Everything the application refused to take from the model, or rewrote:
+   * schema violations, values outside the business rules (docs/ai-agent.md
+   * §8), and free text that was not the user's own words
+   * (docs/tech-stack.md §7.2). Surfaced, never silently dropped.
+   */
+  rejected: AgentIssue[];
 }
 
 export type TurnOutcome =
@@ -85,7 +94,10 @@ export function applyExtraction(
     next = recordField(next, value.field, {
       value: value.value,
       status: value.status,
-      confidence: value.confidence,
+      // docs/ai-agent.md §9: confidence is stored per attribute, but the
+      // model's own claim is checked against the status it gave alongside it
+      // before it becomes domain state (CLAUDE.md §7).
+      confidence: capConfidenceByStatus(value.status, value.confidence),
       source,
     });
   }
@@ -121,7 +133,27 @@ async function runExtraction(
   }
 
   const extraction = normalizeExtraction(parsed.extraction);
-  let next = applyExtraction(conversation, extraction, source);
+
+  // docs/ai-agent.md §8 — schema-legal is not the same as legal. Numeric
+  // ranges, geographic values and text limits are checked before any value
+  // becomes domain state.
+  const checked = validateExtractedValues(extraction.values);
+
+  // docs/tech-stack.md §7.2 — free text is persisted in the user's own
+  // language, never in the English MedPsy reasons in. The turn just added is
+  // the user's, so its text is what the values are checked against.
+  const utterance = conversation.turns[conversation.turns.length - 1] ?? null;
+  const guarded = preserveUserLanguage(checked.values, {
+    source,
+    utterance: utterance?.role === 'user' ? utterance.text : null,
+    pendingField: conversation.pendingField,
+  });
+
+  let next = applyExtraction(
+    conversation,
+    { ...extraction, values: guarded.values },
+    source
+  );
   next = { ...next, lastError: null, pendingField: null };
 
   const hadPhoto = next.turns.some((turn) => turn.source === 'image');
@@ -135,7 +167,7 @@ async function runExtraction(
       conversation: withDerivedStatus(next),
       action,
       message: extraction.followUpQuestion ?? messageFor(action),
-      rejected: parsed.rejected,
+      rejected: [...parsed.rejected, ...checked.issues, ...guarded.issues],
     },
   };
 }

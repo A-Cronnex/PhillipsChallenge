@@ -66,8 +66,18 @@ user's text. Consequences:
 
 - Extraction quality on Spanish input is unmeasured. It may be fine (MedPsy has
   seen Spanish) or poor — that is a device measurement, not a guess.
-- Nothing is corrupted by this: the user's original text is what gets persisted
-  either way, which is what §7.2 actually requires of storage.
+- Nothing is corrupted by this: the **storage** half of §7.2 is enforced
+  independently of the bridge — see §8.4 below. Free-text values are checked
+  against the user's own words before they become domain state, so English
+  reaches a field value neither from the bridge nor from MedPsy answering in
+  English on its own.
+- The part that still depends on the bridge is the **follow-up question** shown
+  to the user. It is prompt-enforced only (`languageRules` in
+  `services/ai/prompts.ts` asks for it in the user's language) and cannot be
+  verified offline, because "is this Spanish?" needs a language detector this
+  project does not have. If MedPsy answers in English anyway, the user sees an
+  English question; the app's own Spanish wording (`messageFor`) is used
+  whenever the model produces no follow-up.
 
 Wiring it means calling `translate({ modelId, text, from:'es', to:'en' })`
 before the completion and again in reverse for the follow-up question. Deferred
@@ -85,7 +95,9 @@ recorder UI exists — the agent accepts text and photos today).
 app/(tabs)/conversations/index.tsx      route: resolves user + runtime
 features/conversations/ui/              ConversationScreen, useConversation
 features/conversations/application/     orchestrator, ports (AiRuntime)
-features/conversations/domain/          conversation, fields, vision-flow, extraction
+features/conversations/domain/          conversation, fields, vision-flow,
+                                        extraction, value-rules, language,
+                                        confidence
         ↓ AiRuntime (interface)
 services/ai/                            qvac-runtime, prompts, models
 lib/ai-runtime.ts                       the ONLY file that imports @qvac/*
@@ -149,23 +161,151 @@ returns (CLAUDE.md §7, `docs/ai-agent.md` §8):
 Errors deliberately do **not** include the model's raw output: it can contain
 the user's own words about a hospital (`docs/ai-agent.md` §14).
 
+### 8.1 Three stages, not one
+
+`docs/ai-agent.md` §8 lists nine things validation must cover. They are checked
+in three stages, in this order, all of them before anything becomes domain
+state:
+
+| Stage | Module | Covers |
+|---|---|---|
+| Shape | `domain/extraction.ts` | data types, allowed enumerations, status values, confidence values, field names |
+| Business rules | `domain/value-rules.ts` | numeric ranges, geographic values, text limits |
+| Language | `domain/language.ts` | free text is the user's own words (`docs/tech-stack.md` §7.2) |
+
+They are separate because they fail for different reasons: a malformed payload
+means the model misunderstood the contract, an installation year of 3025 means
+it understood the contract and hallucinated inside it, and "Panama City" for
+"Ciudad de Panamá" means it did its job and translated.
+
+Each stage drops what it refuses and reports it; `TurnResult.rejected` is the
+concatenation of all three. **Known limitation:** `useConversation` does not
+render `rejected` yet, so those reports currently reach no one — the values are
+not silently *persisted*, but they are silently *not shown*.
+
+Still not implemented from §8:
+
+- **Duplicate detection.** It needs repository queries and a matching rule
+  (same site + brand + model + modality? within what time window?) that no
+  document defines. `docs/architecture.md` §4 places it in the domain layer;
+  nothing is there yet.
+- **Required fields** are tracked per conversation (`missingRequiredFields`)
+  but a conversation is not yet converted into an observation, so
+  `validateObservationDraft` — which enforces them for persistence — never runs
+  on an agent-captured record.
+
+### 8.2 Proposed rules introduced here
+
+Flagged the same way `REQUIRE_IDENTIFYING_ATTRIBUTE` is, because the
+documentation does not state them. Each is a one-line change:
+
+| Rule | Where | Why |
+|---|---|---|
+| `MAX_QUANTITY = 10 000`, `MAX_YEARS_OF_USE = 100` | `value-rules.ts` | §8 requires numeric ranges; the database has only lower bounds, which does not catch "1200000 monitors" |
+| `MAX_NOTES_LENGTH = 2 000`, `MAX_LABEL_LENGTH = 200` | `value-rules.ts` | guards against a model returning its reasoning as a field value |
+| Place names contain no digits | `value-rules.ts` | the strongest "geographic value" check available with no offline gazetteer (CLAUDE.md §18) |
+| An `estimated` value cannot be `high` confidence | `domain/confidence.ts` | the two claims contradict each other; the cap only ever lowers a claim |
+| `MAX_DIRECT_ANSWER_LENGTH = 60` | `domain/language.ts` | decides when a short reply *is* the answer to the question just asked |
+
+### 8.3 Confidence (§9)
+
+Per-attribute confidence comes from the model, is validated against
+`CONFIDENCE_LEVELS`, capped against its own status, and stored per field in
+`ConversationState`. `domain/confidence.ts` turns that into
+`attribute_confidence` rows and derives the observation-level value.
+
+The overall rule is **not** reimplemented for the agent: it calls
+`deriveOverallConfidence` from `features/observations/domain/confidence.ts`, so
+an observation captured by talking and the same one typed into the form cannot
+end up rated differently. Fields with no confidence attribute in
+`docs/domain-model.md` §7 — quantity, site name, city, country, years of use,
+notes — produce no row and do not affect the overall value.
+
+§9's other half, "the agent must ask the user about confidence when required by
+the business workflow", is **not** implemented for the agent path: the manual
+form has `ConfidenceSelector`, the conversation has no equivalent turn. Which
+workflow requires it is not defined anywhere.
+
+### 8.4 Free Text Stays in the User's Language (§7.2)
+
+`docs/tech-stack.md` §7.2 and `docs/domain-model.md` §6 require `notes` and
+other free-text fields to be persisted in the user's language, with MedPsy's
+English as a transient working copy. Enforced in two places:
+
+- **Prompt** (`services/ai/prompts.ts`): the model is told to copy the user's
+  own words character for character for the language-sensitive fields, and to
+  write the follow-up question in the user's language.
+- **Domain** (`features/conversations/domain/language.ts`): the prompt is a
+  request, and model output is never trusted (CLAUDE.md §7). For a text or
+  voice turn, a language-sensitive value must be found in **what the user
+  actually said this turn**, compared with accents, case and punctuation
+  folded. There is no language detector: "is this Spanish?" is replaced by
+  "did the user write this?", which is decidable offline.
+
+What happens when the check fails:
+
+| Case | Result |
+|---|---|
+| Value found in the utterance | Replaced by the user's own spelling of it, accents included |
+| Not found, field is `notes` | Replaced by the user's whole statement (`docs/ai-agent.md` §6, preserve the original statement) |
+| Not found, field is the one just asked about, reply ≤ 60 chars | Replaced by the reply — a short answer to a direct question *is* the value |
+| Otherwise | Dropped and reported; the field stays missing and the agent asks again |
+
+Which fields are language-sensitive is
+`CAPTURE_FIELD_SPECS[field].languageSensitive`: `notes`, `siteName`, `city`,
+`country`, `operationalStatus`, `modality`. `brand` and `model` are excluded —
+a manufacturer name and a model number are language-invariant, and they are
+exactly what a nameplate photo produces. `modality` is the debatable inclusion:
+it is in because migration 001 deliberately stores it as free text with no
+controlled vocabulary, so "rayos X" must not become "X-Ray"; revisit if a
+canonical modality vocabulary is ever confirmed.
+
+Limits worth knowing:
+
+- The check sees **only the current turn**. That is sound today because
+  `TextExtractionRequest` carries no conversation history, so the model cannot
+  legitimately produce a value from an earlier turn. If history is ever passed
+  to the model, this check has to widen with it or it will start dropping good
+  values.
+- Image turns are exempt: a nameplate reads the way it is printed and there is
+  no utterance to compare against. VisionPsy transcribing a Spanish label into
+  English is possible and is **not** caught — `docs/tech-stack.md` §7.2 already
+  flags VisionPsy's Spanish behaviour as unverified.
+- Substring matching means a model answering "monitor" for a user who said
+  "monitores" is accepted, and stores "monitor". That is the user's own word,
+  truncated, not a translation.
+
 ## 9. Tests
 
-`npm test` — 193 tests across 16 suites, all passing. For the agent:
+`npm test` — 241 tests across 19 suites, all passing. For the agent:
 
 - `tests/features/conversations/vision-flow.test.ts` (13) — each §3a rule,
   named after the rule it protects.
 - `tests/features/conversations/extraction.test.ts` (16) — invented fields,
   invalid statuses and confidences, non-primitive values, NaN, partial
   salvage, the unknown-value rule.
-- `tests/features/conversations/orchestrator.test.ts` (13) — the full §3a
+- `tests/features/conversations/orchestrator.test.ts` (20) — the full §3a
   sequence against a scripted runtime: photo → re-request → voice suggestion;
   mixed image/voice capture in one conversation; inference failure preserving
-  the conversation; unusable output fabricating nothing.
+  the conversation; unusable output fabricating nothing; and the §8/§9/§7.2
+  rules end to end (out-of-range year not recorded, `"5"` recorded as 5,
+  estimated+high capped, an English note replaced by the user's Spanish
+  sentence, a translated city dropped).
+- `tests/features/conversations/value-rules.test.ts` (18) — §8 numeric ranges,
+  geographic values, text limits, numeric-string coercion.
+- `tests/features/conversations/language.test.ts` (13) — §7.2: accent-folded
+  matching, the user's spelling restored, the notes fallback, the direct-answer
+  fallback, brand/model and photo values left alone.
+- `tests/features/conversations/confidence.test.ts` (10) — §9: per-attribute
+  rows, the field→attribute mapping, source preservation, the status cap, and
+  the overall rule shared with manual capture.
 
 **What these do not prove:** that a real model returns anything resembling
 these shapes. Every test substitutes a fake `AiRuntime`. QVAC cannot run under
-Jest or on an emulator (`docs/ai-agent.md` §12).
+Jest or on an emulator (`docs/ai-agent.md` §12). In particular, no test proves
+that MedPsy honours the verbatim-value instruction — the domain guard exists
+precisely because that cannot be assumed — and none proves that a follow-up
+question actually comes back in Spanish.
 
 ## 10. Device Testing Checklist
 
@@ -226,6 +366,12 @@ against type definitions, never executed.
     other (`unloadModel` is available).
 14. **`visionReadable` field mapping** (§6). Does asking for a photo of the
     modality actually work, or should it be voice-only?
+15. **How often the language guard fires** (§8.4). If MedPsy honours the
+    verbatim instruction, `free_text_not_in_user_language` should be rare. If
+    it fires constantly on real Spanish input, that is the measurement that
+    justifies wiring the Bergamot bridge (§4) — and it also means users are
+    being re-asked for fields they already answered, which is the one way this
+    guard can hurt the capture flow.
 
 ### 10.4 Non-AI items also pending a device
 

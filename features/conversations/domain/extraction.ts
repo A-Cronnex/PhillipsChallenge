@@ -31,17 +31,27 @@ export interface AgentExtraction {
   followUpQuestion: string | null;
 }
 
-export interface ExtractionIssue {
+/**
+ * Something the application refused to take from the model, with enough
+ * context to show it or log it. Every stage that rejects model output reports
+ * in this shape — schema parsing here, business rules in `value-rules.ts`,
+ * the original-language guard in `language.ts` — so a caller can concatenate
+ * them into one list instead of handling three vocabularies.
+ */
+export interface AgentIssue<Code extends string = string> {
   path: string;
-  code:
-    | 'not_an_object'
-    | 'unknown_field'
-    | 'invalid_value_type'
-    | 'invalid_status'
-    | 'invalid_confidence'
-    | 'invalid_follow_up';
+  code: Code;
   detail?: string;
 }
+
+export type ExtractionIssue = AgentIssue<
+  | 'not_an_object'
+  | 'unknown_field'
+  | 'invalid_value_type'
+  | 'invalid_status'
+  | 'invalid_confidence'
+  | 'invalid_follow_up'
+>;
 
 export type ExtractionParseResult =
   | { ok: true; extraction: AgentExtraction; rejected: ExtractionIssue[] }

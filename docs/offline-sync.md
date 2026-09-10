@@ -43,6 +43,13 @@ Records may have the following synchronization states:
 - `failed`
 - `conflict`
 
+Note on `conflict`: it is **not written by the implemented upload flow**. Under
+client-wins the device version becomes what the server holds, so a resolved
+conflict leaves the record genuinely `synchronized`; marking it `conflict`
+would leave it queued forever. The value is kept for the download direction,
+where a server change can conflict with a locally pending one. See
+`docs/sync-api.md` §8.
+
 ## 5. Synchronization Flow
 
 ```text
@@ -174,10 +181,33 @@ If implemented, it must define:
 - Retry behavior.
 - User consent.
 
-## 14. Open Decisions
+## 14. Implemented Protocol
 
-- Exact synchronization protocol.
-- Server versioning model.
+The **upload direction** is implemented and specified in `docs/sync-api.md`:
+`POST /v1/sync` against a Node.js + PostgreSQL server, with per-record
+outcomes, replay detection, and the client-wins resolution of §8 above.
+
+This resolves two items previously listed here as open:
+
+- **Exact synchronization protocol** → `docs/sync-api.md` §3 (upload only).
+- **Server versioning model** → a monotonic integer `server_version` per
+  entity, held in `sync_entity_state` on the server and mirrored into
+  `sync_records.server_version` on the device. Divergence is detected by
+  comparing the client's last-seen version with the server's current one
+  (`docs/sync-api.md` §5).
+
+## 15. Still Open
+
+- **The download direction.** Not implemented, and blocked on three separate
+  decisions — the cursor's semantics, what "the records this user needs" means
+  (§10 above), and tombstones for deletes. See `docs/sync-api.md` §2.
+- **Deletion.** `operation: 'delete'` is rejected by the server; the
+  soft-delete strategy is undecided (`docs/database.md` §16).
+- **How a resolved conflict is surfaced to the field user.** It is reported by
+  the sync run and archived on the server, but nothing durable is written
+  locally. See `docs/sync-api.md` §8.
+- **Binary transfer** of photos and audio (`docs/sync-api.md` §10).
 - Maximum map cache size.
-- Data retention policy.
+- Data retention policy — including how long the server's `sync_conflicts`
+  archive is kept.
 - Bluetooth protocol.

@@ -269,12 +269,14 @@ Do not invent final decisions for:
 
 - Exact QVAC APIs and model versions.
 - Exact local database library.
-- Exact backend technology.
 - Authentication protocol.
 - Bluetooth protocol.
 - Production deployment configuration.
 - Data retention policy.
 - Encryption implementation.
+- Soft-delete strategy (now blocking: it gates record deletion and the
+  synchronization download direction).
+- How a resolved synchronization conflict is surfaced to the field user.
 
 When one of these decisions is required, explain the options and
 request confirmation or document the selected decision.
@@ -286,3 +288,9 @@ see the linked section rather than treating them as open:
   §8 and `docs/tech-stack.md` §8.
 - Map tile provider → self-hosted only, no third-party cloud,
   `docs/tech-stack.md` §4a.
+- Exact backend technology → Node.js + PostgreSQL, `docs/tech-stack.md` §5.
+- Synchronization protocol, upload direction → `POST /v1/sync`,
+  `docs/sync-api.md`. The download direction is **not** implemented and is
+  still open, for the reasons in `docs/sync-api.md` §2.
+- Server schema → `server/migrations/001_initial_schema.sql`,
+  `docs/sync-api.md` §6.

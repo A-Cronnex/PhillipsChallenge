@@ -257,7 +257,14 @@ describe('completion of the conversation', () => {
     };
     const ai = runtime({ text: [all] });
 
-    const outcome = await submitText(conversation(), 'cinco monitores Philips', deps(ai));
+    // The site name appears in what the user said: free-text values must be
+    // the user's own words (docs/tech-stack.md §7.2), and the runtime only
+    // ever sees the current turn, so a name absent from it would be dropped.
+    const outcome = await submitText(
+      conversation(),
+      'cinco monitores Philips en el Hospital Example',
+      deps(ai)
+    );
     expect(outcome.status).toBe('ok');
     if (outcome.status !== 'ok') return;
 
@@ -274,5 +281,133 @@ describe('completion of the conversation', () => {
     expect(outcome.status).toBe('ok');
     if (outcome.status !== 'ok') return;
     expect(outcome.result.message).toBe('¿De qué marca son los equipos?');
+  });
+});
+
+describe('validation of what the model returned — docs/ai-agent.md §8', () => {
+  it('does not record a value outside the allowed range, and reports it', async () => {
+    const ai = runtime({
+      text: [found('estimatedInstallationYear', 3025)],
+    });
+
+    const outcome = await submitText(
+      conversation(),
+      'lo instalaron hace años',
+      deps(ai)
+    );
+    expect(outcome.status).toBe('ok');
+    if (outcome.status !== 'ok') return;
+
+    expect(
+      outcome.result.conversation.fields.estimatedInstallationYear.value
+    ).toBeNull();
+    expect(outcome.result.rejected).toContainEqual(
+      expect.objectContaining({ code: 'out_of_range' })
+    );
+  });
+
+  it('records a count the model returned as a string, as a number', async () => {
+    const ai = runtime({ text: [found('quantity', '5')] });
+
+    const outcome = await submitText(conversation(), 'son cinco', deps(ai));
+    expect(outcome.status).toBe('ok');
+    if (outcome.status !== 'ok') return;
+
+    expect(outcome.result.conversation.fields.quantity.value).toBe(5);
+  });
+
+  it('caps the confidence of a value the model itself called estimated (§9)', async () => {
+    const ai = runtime({
+      text: [found('brand', 'Philips', 'estimated', 'high')],
+    });
+
+    const outcome = await submitText(conversation(), 'creo que Philips', deps(ai));
+    expect(outcome.status).toBe('ok');
+    if (outcome.status !== 'ok') return;
+
+    expect(outcome.result.conversation.fields.brand.confidence).toBe('medium');
+    expect(outcome.result.conversation.fields.brand.status).toBe('estimated');
+  });
+});
+
+describe('free text stays in the user’s language — docs/tech-stack.md §7.2', () => {
+  it('stores the user’s own sentence as notes, not the model’s English version', async () => {
+    const utterance =
+      'Uno de los monitores Philips está fuera de servicio desde marzo';
+    const ai = runtime({
+      text: [
+        {
+          values: [
+            {
+              field: 'notes',
+              value: 'One Philips monitor has been out of service since March',
+              status: 'reported',
+              confidence: 'medium',
+            },
+          ],
+          followUpQuestion: null,
+        } as AgentExtraction,
+      ],
+    });
+
+    const outcome = await submitText(conversation(), utterance, deps(ai));
+    expect(outcome.status).toBe('ok');
+    if (outcome.status !== 'ok') return;
+
+    expect(outcome.result.conversation.fields.notes.value).toBe(utterance);
+    expect(outcome.result.rejected).toContainEqual(
+      expect.objectContaining({ code: 'free_text_replaced_with_original' })
+    );
+  });
+
+  it('does not record a translated city, and leaves the field for the agent to ask again', async () => {
+    const ai = runtime({
+      text: [found('city', 'Panama City')],
+    });
+
+    const outcome = await submitText(
+      conversation(),
+      'el hospital queda en Ciudad de Panamá, cerca del centro',
+      deps(ai)
+    );
+    expect(outcome.status).toBe('ok');
+    if (outcome.status !== 'ok') return;
+
+    expect(outcome.result.conversation.fields.city.value).toBeNull();
+    expect(outcome.result.rejected).toContainEqual(
+      expect.objectContaining({ code: 'free_text_not_in_user_language' })
+    );
+  });
+
+  it('keeps a nameplate reading from a photo untouched', async () => {
+    const ai = runtime({ image: [found('modality', 'Monitor')] });
+
+    const outcome = await submitPhoto(conversation(), '/tmp/a.jpg', deps(ai));
+    expect(outcome.status).toBe('ok');
+    if (outcome.status !== 'ok') return;
+
+    expect(outcome.result.conversation.fields.modality.value).toBe('Monitor');
+    expect(outcome.result.rejected).toEqual([]);
+  });
+
+  it('keeps the spoken words for a field answered by voice', async () => {
+    const ai = runtime({
+      transcript: 'rayos X',
+      text: [found('modality', 'X-Ray')],
+    });
+
+    // The agent had just asked about the modality, so the reply is the answer.
+    const asked: ConversationState = {
+      ...conversation(),
+      pendingField: 'modality',
+      status: 'awaiting_clarification',
+    };
+
+    const outcome = await submitVoice(asked, '/tmp/a.m4a', deps(ai));
+    expect(outcome.status).toBe('ok');
+    if (outcome.status !== 'ok') return;
+
+    expect(outcome.result.conversation.fields.modality.value).toBe('rayos X');
+    expect(outcome.result.conversation.fields.modality.source).toBe('voice');
   });
 });
