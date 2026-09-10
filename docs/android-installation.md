@@ -188,6 +188,22 @@ si contiene datos pendientes: desinstalar borra su almacenamiento local.
   SDK 54. `package.json` fija `expo-asset` en `overrides`. Si reaparece, ejecuta
   `npx expo-modules-autolinking resolve -p android -j` y comprueba que
   `expo-asset` resuelva a 12.0.x; después reinstala y vuelve a compilar.
+- **`TurboModuleRegistry.getEnforcing(...): 'PlatformConstants' could not be
+  found` / `[runtime not ready]`:** el mensaje es engañoso; RN no perdió su
+  módulo nativo. Antes, en `logcat`, aparece
+  `SoLoader: couldn't find DSO to load: libnativehelper.so` seguido de
+  `Failed to recover`. `libbare-kit.so` (prebuild de `react-native-bare-kit`,
+  dependencia de QVAC) enlaza contra `libnativehelper.so`, que desde Android 13
+  vive en el APEX de ART y ya no en `/system/lib64`. Con
+  `extractNativeLibs="false"` SoLoader carga las librerías directamente desde el
+  APK y resuelve él mismo las dependencias `NEEDED`: no encuentra
+  `libnativehelper.so`, aborta la carga de `libappmodules.so` —la librería de
+  codegen que registra todos los TurboModules, `PlatformConstants` incluido— y
+  el arranque de JS falla. La solución es `useLegacyPackaging: true` en
+  `expo-build-properties` (`app.json`), que extrae las librerías al directorio
+  de la app y deja la resolución al enlazador del sistema, para el que
+  `libnativehelper.so` sí es pública. Coste: la instalación ocupa más espacio.
+  Requiere prebuild y recompilar; reinstalar la APK anterior no basta.
 - **Sincronización devuelve 401:** revisa token, UUID de dispositivo y
   `SYNC_DEVICE_CREDENTIALS`; vuelve a introducir el token tras reiniciar la app.
 - **Sincronización rechaza referencias:** el usuario debe existir también en
@@ -195,6 +211,25 @@ si contiene datos pendientes: desinstalar borra su almacenamiento local.
 - **HTTP desde el teléfono:** solo se permite HTTP loopback. Para pruebas locales
   usa `adb reverse tcp:8080 tcp:8080`, URL `http://127.0.0.1:8080` y una build de
   desarrollo. Para servidores remotos usa HTTPS con certificado confiable.
+
+### Ver los errores en la computadora
+
+La pantalla del teléfono muestra solo el mensaje; la traza completa está en
+`logcat`. Con el teléfono conectado por USB:
+
+```bash
+adb logcat -c                    # limpia el búfer
+adb logcat > ~/crash.txt         # abre la app, reproduce el fallo, Ctrl+C
+```
+
+Para verlo en vivo mientras arranca la app, filtrando el ruido del sistema:
+
+```bash
+adb logcat -c && adb logcat AndroidRuntime:E ReactNative:V ReactNativeJS:V ExpoModulesCore:V *:S
+```
+
+Un fallo nativo aparece bajo `AndroidRuntime`/`FATAL EXCEPTION` con la clase y
+la pila completas. Los errores de JavaScript aparecen bajo `ReactNativeJS`.
 
 ## 8. Alcance de la verificación
 
