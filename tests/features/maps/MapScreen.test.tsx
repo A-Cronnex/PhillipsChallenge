@@ -9,6 +9,7 @@ import type {
   MappedSite,
 } from '../../../features/maps/domain/map-features';
 import type { MapRegion } from '../../../features/maps/application/ports';
+import { PREDEFINED_REGIONS } from '../../../features/maps/domain/predefined-regions';
 
 /**
  * MapLibre binds to native code and cannot render under Jest, so the map
@@ -69,6 +70,12 @@ function repositories(options: {
   regions?: MapRegion[];
   error?: Error;
 }): Repositories {
+  // A real Map, not a frozen array: the download button reads and writes
+  // this through upsertRegion/updateRegionStatus, and useMapData re-reads it
+  // via listRegions — this fake needs to behave like the table those calls
+  // share, not like a fixture that never changes.
+  const regionRows = new Map((options.regions ?? []).map((region) => [region.id, region]));
+
   return {
     mapData: {
       async loadMapDataset() {
@@ -81,7 +88,33 @@ function repositories(options: {
         };
       },
     },
-    mapRegions: { listRegions: async () => options.regions ?? [] },
+    mapRegions: {
+      listRegions: async () => [...regionRows.values()],
+      upsertRegion: async (region: MapRegion) => {
+        regionRows.set(region.id, region);
+      },
+      updateRegionStatus: async (
+        id: string,
+        update: {
+          status: MapRegion['status'];
+          progress: number;
+          lastError?: string | null;
+          sizeBytes?: number | null;
+          downloadedAt?: string | null;
+        }
+      ) => {
+        const existing = regionRows.get(id);
+        if (!existing) return;
+        regionRows.set(id, {
+          ...existing,
+          status: update.status,
+          progress: update.progress,
+          lastError: update.lastError ?? existing.lastError,
+          sizeBytes: update.sizeBytes ?? existing.sizeBytes,
+          downloadedAt: update.downloadedAt ?? existing.downloadedAt,
+        });
+      },
+    },
     // The map must never touch capture or auth.
     observations: {
       save: () => {
@@ -280,5 +313,80 @@ describe('MapScreen', () => {
     await waitFor(() =>
       expect(screen.getByText(/Panamá — downloading \(42%\)/)).toBeTruthy()
     );
+  });
+
+  it('offers to download a not-yet-downloaded region, and not a downloading one', async () => {
+    const predefined = PREDEFINED_REGIONS[0];
+    mockGetRepositories.mockResolvedValue(
+      repositories({
+        dataset: { sites: [SITE] },
+        regions: [
+          {
+            id: predefined.id,
+            name: predefined.name,
+            bounds: predefined.bounds,
+            status: 'not_downloaded',
+            progress: 0,
+            lastError: null,
+            sizeBytes: null,
+            downloadedAt: null,
+          },
+          {
+            id: 'r-downloading',
+            name: 'En curso',
+            bounds: [-83, 7, -77, 10],
+            status: 'downloading',
+            progress: 0.1,
+            lastError: null,
+            sizeBytes: null,
+            downloadedAt: null,
+          },
+        ],
+      })
+    );
+    render(<MapScreen />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId(`download-region-${predefined.id}`)).toBeTruthy()
+    );
+    expect(screen.queryByTestId('download-region-r-downloading')).toBeNull();
+  });
+
+  it('pressing Descargar starts the download and reflects its outcome', async () => {
+    const predefined = PREDEFINED_REGIONS[0];
+    mockGetRepositories.mockResolvedValue(
+      repositories({
+        dataset: { sites: [SITE] },
+        regions: [
+          {
+            id: predefined.id,
+            name: predefined.name,
+            bounds: predefined.bounds,
+            status: 'not_downloaded',
+            progress: 0,
+            lastError: null,
+            sizeBytes: null,
+            downloadedAt: null,
+          },
+        ],
+      })
+    );
+    render(<MapScreen />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId(`download-region-${predefined.id}`)).toBeTruthy()
+    );
+    fireEvent.press(screen.getByTestId(`download-region-${predefined.id}`));
+
+    // No self-hosted style is configured in this test environment
+    // (EXPO_PUBLIC_MAP_STYLE_URL is unset), so the real
+    // services/maps/offline-regions.ts refuses the download — the row must
+    // land on `failed`, not disappear or stay stuck on `downloading`.
+    const escapedName = predefined.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    await waitFor(() =>
+      expect(screen.getByText(new RegExp(`${escapedName} — failed`))).toBeTruthy()
+    );
+    // Retryable: the button comes back once the region is failed.
+    expect(screen.getByTestId(`download-region-${predefined.id}`)).toBeTruthy();
   });
 });

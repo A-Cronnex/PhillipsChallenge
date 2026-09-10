@@ -1,0 +1,24 @@
+{
+  "name": "hospital-equipment-intelligence-tileserver",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Self-hosted MapLibre style and vector tiles for the app's basemap (docs/maps.md §5, option 1). Serves a small, purpose-built extract — not a general tile provider.",
+  "main": "dist/tileserver/src/main.js",
+  "scripts": {
+    "build": "tsc -p .",
+    "typecheck": "tsc -p . --noEmit",
+    "start": "node dist/tileserver/src/main.js",
+    "fetch-sources": "node --experimental-strip-types scripts/fetch-osm-sources.ts"
+  },
+  "dependencies": {
+    "geojson-vt": "^5.0.2",
+    "vt-pbf": "^3.1.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "~5.9.2"
+  },
+  "engines": {
+    "node": ">=20.17"
+  }
+}

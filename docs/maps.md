@@ -57,43 +57,75 @@ dependency re-enters a nominally self-hosted style. The consequence is that
 **no text-rendering layer can be used** — labels are drawn as React views
 instead.
 
-## 4. Generating Tiles (Not Done Here)
+## 4. Generating Tiles — Implemented for Brazil/Panama (2026-09-10)
 
-No tile file is produced by this repository. When the basemap is wanted:
+`tileserver/` is a small, separate Node process (own `package.json`, mirroring
+`server/`'s "own package so `pg` never reaches the mobile app" reasoning —
+here it is "map-tiling libraries never reach the mobile app") that serves a
+self-hosted MapLibre style and its vector tiles for two field-work areas:
+**Sao Paulo** and **Ciudad de Panamá**, plus a country-outline layer for
+**Brazil** and **Panamá**.
 
-1. Take an OpenStreetMap extract for the region (e.g. Panama) from a source
-   such as Geofabrik.
-2. Generate vector tiles with Protomaps (`.pmtiles`) or the OpenMapTiles
-   toolchain (`.mbtiles`).
-3. Author a MapLibre style referencing those tiles, plus self-hosted glyphs and
-   sprites if labels are needed.
-4. Either bundle the output with the app or serve it from the project's own
-   backend, then set `basemapConfig` accordingly.
+Pipeline, entirely self-hosted, no cloud tile provider at any step:
 
-## 5. Known Limitation: `.pmtiles` Is Not Directly Loadable
+1. `tileserver/scripts/fetch-osm-sources.ts` (`npm run fetch-sources`) pulls a
+   small, purpose-built extract from OpenStreetMap's Overpass API — roads,
+   water and landuse for the two city bounding boxes, plus each country's
+   `admin_level=2` boundary relation — into `tileserver/data/*.geojson`
+   (gitignored; regenerate, don't hand-edit).
+2. `tileserver/src/main.ts` slices those GeoJSON files into vector tiles
+   **at request time** with `geojson-vt`, and serializes them to Mapbox
+   Vector Tile protobufs with `vt-pbf`. There is no `.mbtiles` file and no
+   tippecanoe/osmium step: this environment had neither installed, and a
+   pure-JS pipeline needs neither. The per-layer index is built once, at
+   startup, from data already in memory (~22MB across four files), so a
+   request only slices an already-built tile.
+3. `GET /styles/self-hosted.json` returns the MapLibre style (fill/line
+   layers only — no `glyphs`, no `sprite`, no `symbol` layer, matching §3's
+   rule below); `GET /tiles/{z}/{x}/{y}.pbf` returns one tile, gzip-encoded,
+   or `204` where there is no data (most of the world, honestly — this
+   server only has data for two cities and two country outlines).
+4. Point `EXPO_PUBLIC_MAP_STYLE_URL` (`.env`, never committed) at
+   `http://<dev-machine-lan-ip>:8090/styles/self-hosted.json`. `PORT`/`HOST`
+   are configurable; see `tileserver/README.md`-equivalent doc comment atop
+   `src/main.ts` for the run steps (`npm install`, `npm run fetch-sources`,
+   `npm run build && npm start`).
+
+Verified on-device (Pixel, 2026-09-10): the style loads, the country-boundary
+line renders, and `OfflineManager.createPack` (§13) successfully downloaded
+both the Sao Paulo and Ciudad de Panamá regions — confirmed by five
+concurrent TCP connections from the phone to the tile server during the
+download, and by the `map_regions` rows reaching `downloaded`.
+
+**What this does not cover:** individual building footprints (São Paulo alone
+is millions of polygons — landuse polygons stand in for city context), a
+country-wide basemap beyond the boundary outline, and any city other than
+these two. Extending to another city means adding its bounding box to
+`CITY_BBOXES` in `fetch-osm-sources.ts` and re-running the fetch — no code
+change needed beyond that.
+
+## 5. Previously a Known Limitation: `.pmtiles` Is Not Directly Loadable
 
 `docs/tech-stack.md` §4a names Protomaps `.pmtiles` as a distribution format,
 but **`@maplibre/maplibre-react-native` 11.3.10 has no PMTiles or MBTiles
 support** — verified by inspecting the installed package, which contains no
 reference to either format. A `pmtiles://` URL will not load.
 
-This is a real gap between the documented plan and what the library does. The
-options, none of which are decided:
+This was a real gap between the documented plan and what the library does.
+Of the options this section used to list undecided:
 
-1. Serve tiles over HTTP from the project's own backend (a small server reading
-   the `.pmtiles`/`.mbtiles` file and returning `z/x/y` tiles). Keeps the
-   generation toolchain and stays self-hosted, but requires connectivity to the
-   backend unless combined with option 3.
+1. Serve tiles over HTTP from the project's own backend. **Implemented — see
+   §4 above** (`tileserver/`), though as request-time `geojson-vt` slicing
+   rather than a pre-built `.pmtiles`/`.mbtiles` file.
 2. Use `OfflineManager.createPack({ mapStyle, bounds, minZoom, maxZoom })` —
-   MapLibre's own offline mechanism, which downloads tiles from a style URL
-   into its local cache. This is the supported offline path and works against a
-   self-hosted style, satisfying §4a. **This is the alternative that was
-   implemented** — see `services/maps/offline-regions.ts` and §13 below.
-3. Bundle raster tiles as files and use a `file://` raster source, trading
-   vector styling for zero infrastructure.
+   MapLibre's own offline mechanism. **Also implemented** — see
+   `services/maps/offline-regions.ts` and §13 below; §4's tile server is what
+   it downloads from.
+3. Bundle raster tiles as files and use a `file://` raster source — not
+   pursued, since option 1 was buildable without it.
 
-Nothing in the code pretends `.pmtiles` works. Until this is decided the
-`none` mode is the honest default.
+The `none` mode (§3) is still the shipped default until `EXPO_PUBLIC_MAP_STYLE_URL`
+is set; §4 is what to set it to.
 
 ## 6. Site Coordinates Are Customer Coordinates (Confirmed)
 
@@ -192,21 +224,23 @@ quantity".
 
 ## 11. What Still Needs a Device
 
-- Any actual map rendering. Nothing in CI has drawn a single pixel.
-- The config plugin's native output (`expo prebuild` has not been run here).
 - Tap hit-testing on circle layers — the screen test simulates the press event,
-  it does not verify MapLibre's hitbox behaviour.
+  it does not verify MapLibre's hitbox behaviour. (Basemap rendering and
+  region-pack downloading themselves **were** verified on a device — §4, §13.)
 - Performance with a realistic number of sites. There is no clustering; it was
   left out because cluster counts need text, and text needs glyphs (§3).
+- Panning/zooming into the downloaded Sao Paulo/Ciudad de Panamá packs to
+  visually confirm street-level detail — the download completing and the
+  country outline rendering were confirmed; a close-in visual check of roads
+  under a site marker was not attempted.
 
 ## 12. Not Implemented
 
-- Any basemap at all, pending the tile-source decision in §5. Region download
-  is implemented but correctly refuses to run without one (§13).
-- Clustering, labels, user location, camera-follow.
-- A UI control to start a region download. The service and persistence exist;
-  no button calls them yet, because with `mode: 'none'` there is nothing to
-  download and a disabled button would be the whole feature.
+- A basemap beyond §4's two cities and two country outlines. Clustering,
+  labels, user location, camera-follow.
+- Any other city: adding one is a `CITY_BBOXES` entry in
+  `tileserver/scripts/fetch-osm-sources.ts` plus a `PREDEFINED_REGIONS` entry
+  in `features/maps/domain/predefined-regions.ts`, not new code.
 
 ## 13. Offline Region Downloads (Implemented)
 
@@ -235,5 +269,16 @@ column mapping, the upsert-not-duplicate behaviour, the COALESCE retention, and
 that the `download_status` and `download_progress` CHECK constraints still
 reject invalid values. Ten Jest tests cover the service itself.
 
-Still needs a device (§11): nothing has actually downloaded a tile, and it
-cannot until a self-hosted style URL exists.
+**Now also verified on-device** (2026-09-10), against the tile server in §4:
+pressing the "Descargar" button that `features/maps/ui/MapScreen.tsx` shows
+for each `not_downloaded`/`failed` predefined region
+(`features/maps/domain/predefined-regions.ts`) drove both the Sao Paulo and
+Ciudad de Panamá packs from `not_downloaded` to `downloaded`, with five
+concurrent connections from the phone to the tile server observed during the
+download. `features/maps/application/download-region.ts` is the orchestrator
+that writes the `map_regions` row before starting and translates
+progress/error callbacks into `updateRegionStatus` calls;
+`features/maps/application/seed-predefined-regions.ts` is what first
+populates the four rows (Brazil, Panamá, Sao Paulo, Ciudad de Panamá) so the
+button has something to act on before any download has run
+(`lib/demo-seed.ts` calls it once a local user exists).

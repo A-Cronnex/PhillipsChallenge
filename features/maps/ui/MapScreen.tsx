@@ -262,15 +262,32 @@ export function MapScreen() {
               Ninguna región descargada.
             </Text>
           ) : (
-            regions.map((region) => (
-              <Text key={region.id} style={styles.regionRow}>
-                {region.name} — {region.status}
-                {region.status === 'downloading'
-                  ? ` (${Math.round(region.progress * 100)}%)`
-                  : ''}
-                {region.lastError ? ` · ${region.lastError}` : ''}
-              </Text>
-            ))
+            regions.map((region) => {
+              const canDownload =
+                region.status === 'not_downloaded' || region.status === 'failed';
+              return (
+                <View key={region.id} style={styles.regionItem}>
+                  <Text style={styles.regionRow}>
+                    {region.name} — {region.status}
+                    {region.status === 'downloading'
+                      ? ` (${Math.round(region.progress * 100)}%)`
+                      : ''}
+                    {region.lastError ? ` · ${region.lastError}` : ''}
+                  </Text>
+                  {canDownload ? (
+                    <Pressable
+                      onPress={() => void map.downloadRegion(region.id)}
+                      style={styles.downloadButton}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Descargar región ${region.name}`}
+                      testID={`download-region-${region.id}`}
+                    >
+                      <Text style={styles.downloadButtonText}>Descargar</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              );
+            })
           )}
           <Text style={styles.regionNote}>
             Las regiones de mapa y los datos de negocio se descargan por
@@ -380,11 +397,26 @@ const styles = StyleSheet.create({
     borderTopColor: colors.surfaceVariant,
   },
   sectionTitle: { ...typography.titleMedium, color: colors.onSurface },
+  regionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+    marginTop: spacing.xs,
+  },
   regionRow: {
     ...typography.bodyMedium,
     color: colors.onSurface,
-    marginTop: spacing.xs,
+    flex: 1,
   },
+  downloadButton: {
+    minHeight: MIN_TOUCH_TARGET,
+    justifyContent: 'center',
+    paddingHorizontal: spacing.sm,
+    borderRadius: 4,
+    backgroundColor: colors.primary,
+  },
+  downloadButtonText: { ...typography.labelMedium, color: colors.onPrimary },
   regionNote: {
     ...typography.bodyMedium,
     color: colors.onSurfaceVariant,
