@@ -14,6 +14,7 @@ const { createObservationRepository } = require('../database/repositories/observ
 const { createConversationRepository } = require('../database/repositories/conversation-repository.ts');
 const { createSyncRepository } = require('../database/repositories/sync-repository.ts');
 const { createMapRegionRepository } = require('../database/repositories/map-region-repository.ts');
+const { createSiteRepository } = require('../database/repositories/site-repository.ts');
 const { captureObservation } = require('../features/observations/application/capture-observation.ts');
 const { saveConversation } = require('../features/conversations/application/save-conversation.ts');
 const { startConversation } = require('../features/conversations/domain/conversation.ts');
@@ -114,5 +115,31 @@ const db = {
   assert.equal(regionCount(), PREDEFINED_REGIONS.length);
   assert.deepEqual(raw.prepare('PRAGMA foreign_key_check').all(), []);
 
-  console.log('SQLite integration passed: fresh setup, duplicates, equipment history, atomic rollback, conversation recovery, idempotent finalization, sources, queue dependency order, foreign keys, and demo data seeding (sites, equipment, map regions — idempotent on re-run).');
+  // Observation-history screen: SiteRepository.getSite and
+  // ObservationRepository.listBySite, against real SQLite.
+  const siteRepository = createSiteRepository(db);
+  const pacific = DUMMY_SITES.find(site => site.name === 'Hospital DemoCare Pacific');
+  const pacificRow = raw.prepare('SELECT id FROM sites WHERE name = ?').get(pacific.name);
+  const pacificSite = await siteRepository.getSite(pacificRow.id);
+  assert.equal(pacificSite.name, pacific.name);
+  assert.equal(pacificSite.city, pacific.city);
+  assert.equal(pacificSite.country, pacific.country);
+  assert.equal(await siteRepository.getSite(randomUUID()), null);
+
+  const pacificObservations = await observations.listBySite(pacificRow.id);
+  assert.equal(pacificObservations.length, pacific.equipment.length);
+  // Newest visit_date first (both rows share a date in the dummy dataset, so
+  // this also exercises that the query and mapping do not throw on ties).
+  assert.ok(pacificObservations.every(o => o.siteId === pacificRow.id));
+  assert.ok(pacificObservations.every(o => o.createdBy === user.id));
+  assert.ok(pacificObservations.every(o => o.createdByName === user.name));
+  assert.ok(pacificObservations.every(o => o.syncStatus === 'pending'));
+  assert.deepEqual(new Set(pacificObservations.map(o => o.brand)),
+    new Set(pacific.equipment.map(e => e.brand)));
+  // notes is read (unlike the dashboard's aggregate projection, which omits it).
+  assert.ok(pacificObservations.every(o => typeof o.notes === 'string' && o.notes.length > 0));
+
+  assert.deepEqual(await observations.listBySite(randomUUID()), []);
+
+  console.log('SQLite integration passed: fresh setup, duplicates, equipment history, atomic rollback, conversation recovery, idempotent finalization, sources, queue dependency order, foreign keys, demo data seeding (sites, equipment, map regions — idempotent on re-run), and the observation-history reads (getSite, listBySite).');
 })().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => raw.close());

@@ -33,6 +33,9 @@ function fakeObservations() {
       saved.push(observation);
       return { id: observation.id, syncStatus, createdAt: observation.createdAt };
     },
+    async listBySite() {
+      throw new Error('not used by this test');
+    },
   };
   return { repository, saved };
 }

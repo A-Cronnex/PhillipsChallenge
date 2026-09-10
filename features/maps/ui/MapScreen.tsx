@@ -5,6 +5,7 @@ import {
   Map,
   type PressEventWithFeatures,
 } from '@maplibre/maplibre-react-native';
+import { useRouter } from 'expo-router';
 import { useMemo } from 'react';
 import type { NativeSyntheticEvent } from 'react-native';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -35,6 +36,7 @@ const FALLBACK_ZOOM = 1;
  */
 export function MapScreen() {
   const map = useMapData();
+  const router = useRouter();
 
   const mapStyle = useMemo(() => {
     try {
@@ -235,6 +237,16 @@ export function MapScreen() {
             )}
 
             <Pressable
+              onPress={() => router.push({ pathname: '/site/[siteId]', params: { siteId: map.selectedSite!.siteId } })}
+              style={styles.observationsButton}
+              accessibilityRole="button"
+              accessibilityLabel="Ver observaciones de este sitio"
+              testID="view-observations"
+            >
+              <Text style={styles.observationsButtonText}>Ver observaciones</Text>
+            </Pressable>
+
+            <Pressable
               onPress={map.clearSelection}
               style={styles.clearButton}
               accessibilityRole="button"
@@ -380,6 +392,15 @@ const styles = StyleSheet.create({
     marginTop: spacing.xs,
     fontStyle: 'italic',
   },
+  observationsButton: {
+    minHeight: MIN_TOUCH_TARGET,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: spacing.md,
+    borderRadius: 4,
+    backgroundColor: colors.primary,
+  },
+  observationsButtonText: { ...typography.titleMedium, color: colors.onPrimary },
   clearButton: {
     minHeight: MIN_TOUCH_TARGET,
     justifyContent: 'center',

@@ -34,5 +34,14 @@ export function createSiteRepository(
         country: row.country,
       }));
     },
+
+    async getSite(siteId: string): Promise<SiteSummary | null> {
+      const row = await db.getFirstAsync<SiteRow>(
+        `SELECT id, name, city, country FROM sites WHERE id = ?`,
+        [siteId]
+      );
+      if (!row) return null;
+      return { id: row.id, name: row.name, city: row.city, country: row.country };
+    },
   };
 }

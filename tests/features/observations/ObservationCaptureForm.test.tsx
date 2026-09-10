@@ -46,7 +46,10 @@ function buildRepositories(options: {
   return {
     catalog: { listEquipment: async () => [], createLocalUser: async () => USER, createSite: async () => SITE.id },
     conversations: { save: async () => {}, latest: async () => null, finalize: async () => {} },
-    sites: { listSites: async () => options.sites ?? [SITE] },
+    sites: {
+      listSites: async () => options.sites ?? [SITE],
+      getSite: async () => (options.sites ?? [SITE])[0] ?? null,
+    },
     users: {
       // `'user' in options`, not `??`: an explicit null means "no local user",
       // which `options.user ?? USER` would silently turn back into a user.
@@ -120,6 +123,9 @@ function buildRepositories(options: {
           syncStatus,
           createdAt: observation.createdAt,
         };
+      },
+      async listBySite() {
+        throw new Error('not used by this test');
       },
     },
   };

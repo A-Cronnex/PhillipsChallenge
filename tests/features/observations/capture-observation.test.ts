@@ -32,6 +32,9 @@ function recordingRepository(): RecordingRepository {
         createdAt: observation.createdAt,
       };
     },
+    async listBySite() {
+      throw new Error('not used by this test');
+    },
   };
 }
 
@@ -39,6 +42,9 @@ function failingRepository(message: string): ObservationRepository {
   return {
     async save() {
       throw new Error(message);
+    },
+    async listBySite() {
+      throw new Error('not used by this test');
     },
   };
 }
