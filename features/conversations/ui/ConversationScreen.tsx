@@ -3,7 +3,7 @@ import { ConversationReview } from './ConversationReview';
 import { VoiceRecorder } from './VoiceRecorder';
 import { retainArtifact } from '../../../services/capture/artifacts';
 import * as ImagePicker from 'expo-image-picker';
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -25,6 +25,18 @@ import type { AiRuntime } from '../application/ports';
 interface ConversationScreenProps {
   runtime: AiRuntime;
   userId: string;
+  /**
+   * Open the camera as soon as the models are ready. Set by the capture
+   * launcher's photo button, so that pressing it lands on the camera instead
+   * of on an empty transcript.
+   */
+  photoFirst?: boolean;
+  /**
+   * Offered when local inference is unavailable: the keyboard form is the
+   * documented fallback (docs/android-installation.md §7). The screen only
+   * signals the intent; the caller decides what to mount.
+   */
+  onManualCapture?: () => void;
 }
 
 /**
@@ -33,12 +45,41 @@ interface ConversationScreenProps {
  * Everything runs on the device. No input — text, photo or audio — leaves the
  * phone, and the screen never contacts the network.
  */
-export function ConversationScreen({ runtime, userId }: ConversationScreenProps) {
+export function ConversationScreen({
+  runtime,
+  userId,
+  photoFirst = false,
+  onManualCapture,
+}: ConversationScreenProps) {
   const chat = useConversation({ runtime, userId });
   const [draft, setDraft] = useState('');
   const [reviewing, setReviewing] = useState(false);
   const [recording, setRecording] = useState(false);
   const [mediaError, setMediaError] = useState('');
+
+  const takePhoto = useCallback(async () => {
+    setMediaError('');
+    try {
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (!permission.granted) { setMediaError('Permite la cámara en Ajustes para tomar una foto.'); return; }
+      const result = await ImagePicker.launchCameraAsync({ quality: 0.7 });
+      if (!result.canceled && result.assets[0]?.uri) {
+        await chat.sendPhoto(retainArtifact(result.assets[0].uri, 'image'));
+      }
+    } catch { setMediaError('No se pudo conservar la foto. Inténtalo de nuevo.'); }
+  }, [chat.sendPhoto]);
+
+  // The camera is opened only once the models are ready: a nameplate photo is
+  // useless without the vision model, and `runtimePhase` reaches 'ready' only
+  // after the user has loaded them.
+  const photoRequested = useRef(false);
+  useEffect(() => {
+    if (!photoFirst || photoRequested.current) return;
+    if (chat.runtimePhase !== 'ready') return;
+    photoRequested.current = true;
+    void takePhoto();
+  }, [photoFirst, chat.runtimePhase, takePhoto]);
+
   if (reviewing) return <ConversationReview conversation={chat.conversation}
     onSaved={() => { chat.markSaved(); setReviewing(false); }} onCancel={() => setReviewing(false)} />;
   if (chat.conversation.status === 'saved') return <View style={styles.centered}>
@@ -93,20 +134,19 @@ export function ConversationScreen({ runtime, userId }: ConversationScreenProps)
         onRetry={() => void chat.prepare()}
       />
       {chat.conversation.turns.length ? <Button title="Revisar sin inferencia" disabled={chat.busy} onPress={() => setReviewing(true)} /> : null}
+      {onManualCapture ? (
+        <Pressable
+          onPress={onManualCapture}
+          style={styles.manualFallback}
+          accessibilityRole="button"
+          accessibilityLabel="Capturar con el formulario manual"
+          testID="manual-capture-button"
+        >
+          <Text style={styles.manualFallbackText}>Capturar con el formulario</Text>
+        </Pressable>
+      ) : null}
       </View>
     );
-  }
-
-  async function takePhoto() {
-    setMediaError('');
-    try {
-      const permission = await ImagePicker.requestCameraPermissionsAsync();
-      if (!permission.granted) { setMediaError('Permite la cámara en Ajustes para tomar una foto.'); return; }
-      const result = await ImagePicker.launchCameraAsync({ quality: 0.7 });
-      if (!result.canceled && result.assets[0]?.uri) {
-        await chat.sendPhoto(retainArtifact(result.assets[0].uri, 'image'));
-      }
-    } catch { setMediaError('No se pudo conservar la foto. Inténtalo de nuevo.'); }
   }
 
   function send() {
@@ -298,6 +338,13 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     backgroundColor: colors.primary,
   },
+  manualFallback: {
+    minHeight: MIN_TOUCH_TARGET,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.lg,
+  },
+  manualFallbackText: { ...typography.titleMedium, color: colors.primary },
   iconButtonDisabled: { backgroundColor: colors.disabled },
   iconButtonText: { fontSize: 20, color: colors.onPrimary },
 });

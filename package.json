@@ -13,6 +13,7 @@
     "verify:local": "node scripts/verify-local.cjs"
   },
   "dependencies": {
+    "@expo/vector-icons": "^15.1.1",
     "@maplibre/maplibre-react-native": "^11.3.10",
     "@qvac/sdk": "^0.19.0",
     "expo": "~54.0.0",

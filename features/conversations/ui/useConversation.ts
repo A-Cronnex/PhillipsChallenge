@@ -31,6 +31,22 @@ export function useConversation({ runtime, userId, now = clock }: UseConversatio
     return () => { active = false; };
   }, [userId]);
 
+  // The runtime is a process-wide singleton (lib/ai-runtime.ts), so models
+  // loaded earlier in this session are still loaded when this screen is
+  // mounted again — for instance after going back to the capture launcher and
+  // opening the agent a second time. Asking spares the user a load gate that
+  // has nothing left to load. A failure here is not reported: the gate is the
+  // fallback, and pressing it surfaces any real problem.
+  useEffect(() => {
+    let active = true;
+    void runtime.isReady()
+      .then(ready => {
+        if (active && ready) setRuntimePhase(phase => (phase === 'idle' ? 'ready' : phase));
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [runtime]);
+
   const checkpoint = useCallback(async (state: ConversationState) => {
     setConversation(state);
     await (await getRepositories()).conversations.save(state);

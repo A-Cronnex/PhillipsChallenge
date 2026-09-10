@@ -96,8 +96,10 @@ See [implementation-status.md](implementation-status.md) and the
 ## 5. Layering
 
 ```
-app/(tabs)/conversations/index.tsx      route: resolves user + runtime
-features/conversations/ui/              ConversationScreen, useConversation
+app/(tabs)/capture/index.tsx            route: resolves user, passes the
+                                        runtime factory unresolved
+features/conversations/ui/              CaptureLauncher, ConversationScreen,
+                                        useConversation
 features/conversations/application/     orchestrator, ports (AiRuntime)
 features/conversations/domain/          conversation, fields, vision-flow,
                                         extraction, value-rules, language,
