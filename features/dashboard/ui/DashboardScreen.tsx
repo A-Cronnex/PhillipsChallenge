@@ -1,3 +1,4 @@
+import { SyncIconButton } from '../../synchronization/ui/SyncIconButton';
 import { SyncPanel } from '../../synchronization/ui/SyncPanel';
 import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 
@@ -57,10 +58,16 @@ export function DashboardScreen() {
 
   if (metrics.totals.observations === 0) {
     return (
-      <View style={{ flex: 1 }}><SyncPanel onComplete={dashboard.reload} /><EmptyState
-        title="Todavía no hay observaciones"
-        message="Registra una observación en Captura o con el Agente y las métricas aparecerán aquí. El tablero se calcula en el dispositivo, sin conexión."
-      /></View>
+      <View style={{ flex: 1 }}>
+        <View style={styles.topBar}>
+          <SyncIconButton onComplete={dashboard.reload} />
+        </View>
+        <SyncPanel />
+        <EmptyState
+          title="Todavía no hay observaciones"
+          message="Registra una observación en Captura o con el Agente y las métricas aparecerán aquí. El tablero se calcula en el dispositivo, sin conexión."
+        />
+      </View>
     );
   }
 
@@ -78,7 +85,10 @@ export function DashboardScreen() {
         />
       }
     >
-      <SyncPanel onComplete={dashboard.reload} />
+      <View style={styles.topBar}>
+        <SyncIconButton onComplete={dashboard.reload} />
+      </View>
+      <SyncPanel />
       <Text style={styles.caption} testID="dashboard-scope">
         Calculado en este dispositivo el {computedFor}, a partir de{' '}
         {metrics.totals.observations} observación(es) guardada(s) localmente.
@@ -379,6 +389,12 @@ function SiteList({
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
   content: { padding: spacing.md, gap: spacing.md, paddingBottom: spacing.xl },
+  topBar: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.sm,
+  },
   caption: { ...typography.bodyMedium, color: colors.onSurfaceVariant },
   tiles: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   tile: {
