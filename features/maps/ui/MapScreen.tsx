@@ -85,6 +85,13 @@ export function MapScreen() {
   function handleSitePress(
     event: NativeSyntheticEvent<PressEventWithFeatures>
   ): void {
+    // A press on a feature bubbles from the Source up to the Map's own
+    // onPress unless stopped (@maplibre/maplibre-react-native's own
+    // documented behaviour). Without this, selecting a site immediately
+    // triggered the Map's onPress={map.clearSelection} right after —
+    // selection and deselection in the same tap, so nothing ever appeared
+    // selected.
+    event.stopPropagation();
     const feature = event.nativeEvent.features[0];
     const siteId = feature?.properties?.siteId;
     if (typeof siteId === 'string') map.selectSite(siteId);
@@ -116,6 +123,13 @@ export function MapScreen() {
             id={SITES_SOURCE_ID}
             data={collection}
             onPress={handleSitePress}
+            // A site's circle can render as small as a 7px radius (paint
+            // below, for a site with little equipment) — well under the
+            // 48dp touch target CLAUDE.md §13 requires. The library's own
+            // default hitbox (44x44) already pads the tap point, but this
+            // widens it further so a field user does not have to land on
+            // the rendered dot pixel-for-pixel.
+            hitbox={{ top: 32, bottom: 32, left: 32, right: 32 }}
           >
             <Layer
               id={SITE_CIRCLES_LAYER_ID}

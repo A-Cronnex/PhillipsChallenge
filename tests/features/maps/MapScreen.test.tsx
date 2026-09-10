@@ -42,6 +42,19 @@ jest.mock('../../../lib/container', () => ({
   getRepositories: () => mockGetRepositories(),
 }));
 
+const mockPush = jest.fn();
+jest.mock('expo-router', () => ({
+  useRouter: () => ({ push: mockPush }),
+}));
+
+/** A press on the sites GeoJSONSource, shaped like the real NativeSyntheticEvent MapScreen calls stopPropagation() on. */
+function sitePressEvent(siteId: string) {
+  return {
+    stopPropagation: jest.fn(),
+    nativeEvent: { features: [{ properties: { siteId } }] },
+  };
+}
+
 const SITE: MappedSite = {
   siteId: 'site-1',
   name: 'Hospital Example',
@@ -134,7 +147,10 @@ function repositories(options: {
   } as unknown as Repositories;
 }
 
-beforeEach(() => mockGetRepositories.mockReset());
+beforeEach(() => {
+  mockGetRepositories.mockReset();
+  mockPush.mockReset();
+});
 
 describe('MapScreen', () => {
   it('shows a loading state while local data is read', () => {
@@ -244,9 +260,7 @@ describe('MapScreen', () => {
 
     await waitFor(() => expect(screen.getByTestId('maplibre-map')).toBeTruthy());
 
-    fireEvent(screen.getByTestId('mock-geojson-source'), 'press', {
-      nativeEvent: { features: [{ properties: { siteId: 'site-1' } }] },
-    });
+    fireEvent(screen.getByTestId('mock-geojson-source'), 'press', sitePressEvent('site-1'));
 
     await waitFor(() => expect(screen.getByTestId('site-detail')).toBeTruthy());
     expect(screen.getByText('Hospital Example')).toBeTruthy();
@@ -257,6 +271,59 @@ describe('MapScreen', () => {
     ).toBeTruthy();
   });
 
+  it('stops a site press from bubbling to the map and clearing the selection', async () => {
+    // @maplibre/maplibre-react-native documents that a Source press bubbles
+    // to the Map's own onPress unless event.stopPropagation() is called —
+    // without it, selecting a site immediately triggers
+    // onPress={map.clearSelection} on the Map right after, so nothing ever
+    // stays selected. This can't be reproduced end-to-end against the mocked
+    // Map (it does not simulate real bubbling), so this asserts the one
+    // thing that determines the real behaviour: the handler calls it.
+    mockGetRepositories.mockResolvedValue(
+      repositories({ dataset: { sites: [SITE], equipment: [EQUIPMENT] } })
+    );
+    render(<MapScreen />);
+    await waitFor(() => expect(screen.getByTestId('maplibre-map')).toBeTruthy());
+
+    const event = sitePressEvent('site-1');
+    fireEvent(screen.getByTestId('mock-geojson-source'), 'press', event);
+
+    expect(event.stopPropagation).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.getByTestId('site-detail')).toBeTruthy());
+  });
+
+  it('widens the map source hitbox beyond the smallest circle radius', async () => {
+    mockGetRepositories.mockResolvedValue(
+      repositories({ dataset: { sites: [SITE] } })
+    );
+    render(<MapScreen />);
+
+    await waitFor(() => expect(screen.getByTestId('maplibre-map')).toBeTruthy());
+    const hitbox = screen.getByTestId('mock-geojson-source').props.hitbox;
+    expect(hitbox.top).toBeGreaterThanOrEqual(24);
+    expect(hitbox.bottom).toBeGreaterThanOrEqual(24);
+    expect(hitbox.left).toBeGreaterThanOrEqual(24);
+    expect(hitbox.right).toBeGreaterThanOrEqual(24);
+  });
+
+  it('opens the observation history for the selected site', async () => {
+    mockGetRepositories.mockResolvedValue(
+      repositories({ dataset: { sites: [SITE], equipment: [EQUIPMENT] } })
+    );
+    render(<MapScreen />);
+    await waitFor(() => expect(screen.getByTestId('maplibre-map')).toBeTruthy());
+
+    fireEvent(screen.getByTestId('mock-geojson-source'), 'press', sitePressEvent('site-1'));
+    await waitFor(() => expect(screen.getByTestId('site-detail')).toBeTruthy());
+
+    fireEvent.press(screen.getByTestId('view-observations'));
+
+    expect(mockPush).toHaveBeenCalledWith({
+      pathname: '/site/[siteId]',
+      params: { siteId: 'site-1' },
+    });
+  });
+
   it('clears the selection', async () => {
     mockGetRepositories.mockResolvedValue(
       repositories({ dataset: { sites: [SITE], equipment: [EQUIPMENT] } })
@@ -264,9 +331,7 @@ describe('MapScreen', () => {
     render(<MapScreen />);
 
     await waitFor(() => expect(screen.getByTestId('maplibre-map')).toBeTruthy());
-    fireEvent(screen.getByTestId('mock-geojson-source'), 'press', {
-      nativeEvent: { features: [{ properties: { siteId: 'site-1' } }] },
-    });
+    fireEvent(screen.getByTestId('mock-geojson-source'), 'press', sitePressEvent('site-1'));
     await waitFor(() => expect(screen.getByTestId('site-detail')).toBeTruthy());
 
     fireEvent.press(screen.getByTestId('clear-selection'));
