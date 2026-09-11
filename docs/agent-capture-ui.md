@@ -51,6 +51,17 @@ QVAC emite segmentos cuando VAD detecta pausas: **la transcripción parcial es
 progresiva por segmentos, no se promete una actualización por cada fonema**.
 Las revisiones de segmentos sustituyen el fragmento anterior según `append`.
 
+La preparación distingue **Preparando voz** (modelo/sesión, límite de 120 s)
+y **Activando el micrófono** (permiso/arranque, límite de 20 s). Solo después
+del arranque nativo aparece **Grabando**, con el botón cuadrado para terminar.
+Durante la preparación, la acción dice **Cancelar preparación de voz**.
+Si una operación vence o se cancela, sus recursos tardíos se liberan sin enviar
+mensajes. El adaptador consulta primero el permiso: no vuelve a solicitarlo si
+ya está concedido. En el Pixel 10a la solicitud redundante quedaba pendiente y
+evitaba arrancar la captura (corregido el 2026-09-10). Se comprobó en el equipo
+el inicio sostenido, crecimiento del WAV y liberación del micrófono al cancelar;
+esto no certifica la calidad de transcripción de Whisper.
+
 Al pulsar **Terminar grabación y enviar**, se conserva el WAV en almacenamiento
 privado y se guarda su referencia antes de esperar la transcripción final. El
 texto final llega al composer y se envía automáticamente con origen `voice`;
@@ -86,14 +97,29 @@ modifica la vista ni confirma campos.
    en el snapshot local permite recuperar una foto interrumpida antes de inferir;
    todavía no se aplican campos ni se crea una observación.
 2. VisionPsy devuelve `nameplate: detected | not_detected | uncertain`, además
-   del contrato de extracción existente. Solo `detected` y al menos un atributo
-   legible habilitan la revisión. Ausencia de metadatos no equivale a detección.
+   del contrato de extracción existente. `not_detected` y `uncertain` (o
+   ausencia de metadatos) siguen bloqueando la revisión. **`detected` habilita
+   la revisión aunque no se haya leído ningún atributo** (actualizado
+   2026-09-10): VisionPsy-Nano-460M falla a menudo la lectura de una placa que
+   sí ve, y llevar al usuario a un error sin salida con una foto buena en la
+   mano es peor que abrir la revisión con las filas vacías para que las
+   escriba. `NameplateProposal` lleva `nameplate` y `unreadable`
+   (los campos objetivo que volvieron nulos).
 3. Validar estructura, valores, rangos, campos solicitados y duplicados. Se
    mantienen los campos del catálogo marcados `visionReadable`: marca, modelo,
    modalidad y año de instalación explícito. Fabricación no equivale a instalación.
    No se introduce número de serie ni confianza numérica: no existen en el dominio.
-4. Mostrar foto, campos editables y confianza alta/media/baja. Los campos que
-   no pudieron leerse siguen desconocidos y se completan por conversación.
+4. Mostrar foto, un resumen de qué se leyó y qué no (`No se pudo leer: …`),
+   los campos editables y su confianza. Los campos `unreadable` aparecen como
+   filas vacías editables (origen "sin leer — escríbelo tú"); si se rellenan,
+   su valor es `reported` / `text`. Aún así no se puede enviar una revisión
+   totalmente vacía.
+
+**Visibilidad del modelo (dev):** bajo `__DEV__`, `services/ai/qvac-runtime.ts`
+registra en consola el texto crudo de cada modelo y su salida parseada, y
+`nameplate-review.ts` registra un resumen (campos leídos, `unreadable`,
+descartados). Nunca en release (`__DEV__` es falso): la salida cruda puede
+repetir palabras del usuario sobre un sitio (docs/ai-agent.md §14).
 5. **Aceptar cambios y enviar** valida las correcciones e incorpora un turno
    con la foto y un resumen al chat. Los valores intactos conservan estado,
    confianza y origen `image`; las correcciones son `reported` / `text`.
@@ -107,8 +133,38 @@ al chat. Un fallo de guardado conserva los campos editados para reintentar.
 Los límites de espera del selector son recuperación de errores, no temporizadores
 para aparentar estados del agente. El permiso Android se pide con
 `PermissionsAndroid` para evitar el bloqueo previamente registrado en la promesa
-de permisos de Expo. La cámara nativa y VisionPsy aún requieren prueba conjunta
-con placas reales; tener permiso no garantiza que una build abra la cámara.
+de permisos de Expo.
+
+**Cámara integrada (2026-09-10).** `NameplateCamera` utiliza
+[`expo-camera` para Expo 54](https://docs.expo.dev/versions/v54.0.0/sdk/camera/)
+porque `ImagePicker.launchCameraAsync` se bloqueaba en el Pixel sin abrir una
+actividad ni devolver error. Se eliminó esa llamada y su parche de permisos
+nativos; `expo-image-picker` queda para la galería. La nueva dependencia requiere
+prebuild y reinstalación del cliente Android.
+
+La cámara trasera muestra encuadre, linterna y disparador, habilitado solo tras
+`onCameraReady`. La foto abre una vista previa con **Repetir fotografía** y
+**Usar fotografía**. Al usarla, `useNameplateCapture` valida y copia el archivo
+mediante `services/capture/photo`, persiste el checkpoint y recién entonces
+llama a VisionPsy. La vista de cámara no accede a SQLite ni al motor de IA.
+La aprobación de datos sigue siendo **Aceptar cambios y enviar**, después del
+análisis: usar una foto no confirma sus atributos ni crea una observación.
+
+Los permisos denegados ofrecen ajustes, reintento y galería. El arranque/disparo
+tiene un límite de 20 s, se ignoran resultados cancelados y se desmonta la cámara
+al previsualizar, cerrar o pasar a segundo plano. No se solicita audio para
+fotografiar. El sistema conserva la captura y el análisis locales.
+
+Validación física en Pixel 10a: apertura de la cámara trasera, disparo con JPEG
+en caché y vista previa comprobados tras instalar el cliente reconstruido.
+La prueba no certifica lectura de una placa real: esa precisión corresponde a
+VisionPsy y a la revisión humana posterior.
+
+El prompt de visión (`services/ai/prompts.ts`) describe cada campo en inglés
+(`model → "the model name or model number printed on the plate"`), no con la
+etiqueta conversacional en español: un modelo de 460M, al ver `model: el modelo`,
+copiaba esa frase como valor. Se añadió la regla explícita de no copiar la
+descripción del campo en `value`.
 
 ## Offline, accesibilidad y pruebas
 

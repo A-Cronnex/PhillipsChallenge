@@ -55,7 +55,13 @@
           "androidForegroundService": false
         }
       ],
-      "./plugins/with-image-picker-permission-check.cjs"
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "La aplicación usa la cámara para fotografiar la placa del equipo. El análisis ocurre en el dispositivo.",
+          "recordAudioAndroid": false
+        }
+      ]
     ]
   }
 }

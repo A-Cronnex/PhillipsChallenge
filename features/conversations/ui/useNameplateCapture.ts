@@ -3,11 +3,11 @@ import type { AiRuntime } from '../application/ports';
 import { analyzeNameplate, type NameplateProposal } from '../application/nameplate-review';
 import type { ConversationState } from '../domain/conversation';
 import type { ExtractedValue } from '../domain/extraction';
-import { pickNameplate } from '../../../services/capture/photo';
+import { pickNameplate, retainPhoto, type CapturedPhoto } from '../../../services/capture/photo';
 
 export type VisionState =
   | { phase: 'idle' }
-  | { phase: 'capturing' }
+  | { phase: 'capturing'; source: 'camera' | 'library' }
   | { phase: 'processing'; imagePath: string }
   | { phase: 'reviewing'; proposal: NameplateProposal }
   | { phase: 'submitting'; proposal: NameplateProposal }
@@ -37,7 +37,8 @@ export function useNameplateCapture(runtime: AiRuntime, conversation: Conversati
   async function capture(source: 'camera' | 'library') {
     if (lock.current) return;
     lock.current = true; const token = ++generation.current;
-    setState({ phase: 'capturing' });
+    setState({ phase: 'capturing', source });
+    if (source === 'camera') { lock.current = false; return; }
     try {
       const path = await pickNameplate(source);
       if (token !== generation.current) return;
@@ -47,7 +48,19 @@ export function useNameplateCapture(runtime: AiRuntime, conversation: Conversati
       } else setState({ phase: 'idle' });
     } catch (error) {
       if (token === generation.current) setState({ phase: 'error', message: error instanceof Error ? error.message : 'No se pudo abrir la cámara.' });
-    } finally { lock.current = false; }
+    } finally { if (token === generation.current) lock.current = false; }
+  }
+  async function captured(photo: CapturedPhoto) {
+    if (lock.current || state.phase !== 'capturing' || state.source !== 'camera') return;
+    lock.current = true; const token = generation.current;
+    let path: string | undefined;
+    try {
+      path = retainPhoto(photo);
+      await onStage(path);
+      if (token === generation.current) await process(path, token);
+    } catch (error) {
+      if (token === generation.current) setState({ phase: 'error', imagePath: path, message: error instanceof Error ? error.message : 'No se pudo conservar la fotografía.' });
+    } finally { if (token === generation.current) lock.current = false; }
   }
   async function accept(edits: ExtractedValue[]) {
     if (lock.current || !('proposal' in state) || !state.proposal) return;
@@ -61,16 +74,23 @@ export function useNameplateCapture(runtime: AiRuntime, conversation: Conversati
       if (token === generation.current) setState({ phase: 'error', proposal, message: error instanceof Error ? error.message : 'No se pudo enviar la revisión.' });
     } finally { lock.current = false; }
   }
-  return { state, capture, accept,
+  return { state, capture, captured, accept,
     async cancel() {
       if (state.phase === 'submitting') return;
       const token = ++generation.current;
+      lock.current = false;
       try { await onStage(null); if (token === generation.current) setState({ phase: 'idle' }); }
       catch { if (token === generation.current) setState({ phase: 'error', message: 'No se pudo descartar la foto pendiente. Reintenta cuando el almacenamiento esté disponible.' }); }
     },
     async retry() {
       if (lock.current || state.phase !== 'error' || !state.imagePath) return;
-      lock.current = true; try { await process(state.imagePath, ++generation.current); } finally { lock.current = false; }
+      lock.current = true; const token = ++generation.current;
+      try {
+        await onStage(state.imagePath);
+        if (token === generation.current) await process(state.imagePath, token);
+      } catch {
+        if (token === generation.current) setState({ ...state, message: 'No se pudo conservar la foto pendiente. Reintenta cuando el almacenamiento esté disponible.' });
+      } finally { if (token === generation.current) lock.current = false; }
     },
   };
 }

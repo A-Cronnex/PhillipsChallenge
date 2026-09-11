@@ -2,27 +2,38 @@ import * as ImagePicker from 'expo-image-picker';
 import { PermissionsAndroid, Platform } from 'react-native';
 import { retainArtifact } from './artifacts';
 
-function withDeadline<T>(task: Promise<T>, milliseconds: number): Promise<T> {
+function withDeadline<T>(task: Promise<T>, milliseconds: number, message: string): Promise<T> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('La cámara o el selector no respondió. Puedes elegir otra foto o continuar por voz.')), milliseconds);
+    const timer = setTimeout(() => reject(new Error(message)), milliseconds);
     task.then(resolve, reject).finally(() => clearTimeout(timer));
   });
 }
 
-export async function pickNameplate(source: 'camera' | 'library'): Promise<string | null> {
-  if (source === 'camera') {
-    // The current Pixel build hangs in Expo's permission promise (Android guide).
-    const granted = Platform.OS === 'android'
-      ? await withDeadline(PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.CAMERA), 20000) === PermissionsAndroid.RESULTS.GRANTED
-      : (await withDeadline(ImagePicker.requestCameraPermissionsAsync(), 20000)).granted;
-    if (!granted) throw new Error('Permite el acceso a la cámara en los ajustes o elige una foto existente.');
+const SELECTOR_STALLED = 'La cámara o el selector no respondió. Puedes elegir una foto de tu galería o continuar por voz.';
+
+export async function requestCameraAccess(): Promise<boolean> {
+  if (Platform.OS === 'android') {
+    if (await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.CAMERA)) return true;
+    return await withDeadline(PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.CAMERA), 20000, SELECTOR_STALLED) === PermissionsAndroid.RESULTS.GRANTED;
   }
-  const options: ImagePicker.ImagePickerOptions = { mediaTypes: ['images'], quality: 0.9, allowsEditing: false };
-  const result = await withDeadline(source === 'camera' ? ImagePicker.launchCameraAsync(options) : ImagePicker.launchImageLibraryAsync(options), 120000);
-  if (result.canceled) return null;
-  const photo = result.assets[0];
-  if (!photo?.uri || photo.width <= 0 || photo.height <= 0 || (photo.mimeType && !photo.mimeType.startsWith('image/'))) {
+  const camera = require('expo-camera') as typeof import('expo-camera');
+  if ((await camera.Camera.getCameraPermissionsAsync()).granted) return true;
+  return (await withDeadline(camera.Camera.requestCameraPermissionsAsync(), 20000, SELECTOR_STALLED)).granted;
+}
+
+export interface CapturedPhoto { uri: string; width: number; height: number; mimeType?: string }
+
+export function retainPhoto(photo: CapturedPhoto): string {
+  if (!photo?.uri || !Number.isFinite(photo.width) || !Number.isFinite(photo.height) || photo.width <= 0 || photo.height <= 0 || (photo.mimeType && !photo.mimeType.startsWith('image/'))) {
     throw new Error('El archivo seleccionado no es una imagen válida.');
   }
   return retainArtifact(photo.uri, 'image');
+}
+
+/** Camera capture is embedded; ImagePicker is only used for the system gallery. */
+export async function pickNameplate(_source: 'library' = 'library'): Promise<string | null> {
+  const options: ImagePicker.ImagePickerOptions = { mediaTypes: ['images'], quality: 0.9, allowsEditing: false };
+  const result = await withDeadline(ImagePicker.launchImageLibraryAsync(options), 120000, SELECTOR_STALLED);
+  if (result.canceled) return null;
+  return retainPhoto(result.assets[0]);
 }

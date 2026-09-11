@@ -165,10 +165,13 @@ si contiene datos pendientes: desinstalar borra su almacenamiento local.
    Whisper y Silero VAD se descargan al utilizar cada modalidad.
 3. Envía texto en español. El orb cambia con la operación y la respuesta aparece
    carácter por carácter. Con movimiento reducido, aparece completa.
-4. Pulsa el micrófono. Espera **Te estoy escuchando** y comprueba el texto tenue
+4. Pulsa el micrófono. Espera **Grabando** (antes verás **Preparando voz** y
+   **Activando el micrófono**) y comprueba el texto tenue
    provisional. Pulsa **Terminar grabación y enviar**: el texto definitivo llega
    al composer y se envía automáticamente. No hay un segundo botón de transcribir.
 5. **Capturar placa con cámara** permite tomar o seleccionar una fotografía.
+   Pulsa **Tomar fotografía**, encuadra la placa y pulsa el disparador.
+   Revisa la imagen y pulsa **Usar fotografía** o **Repetir fotografía**.
    Espera la comprobación de placa. Edita los datos/confianza y pulsa
    **Aceptar cambios y enviar**; sin esta confirmación no se aplican al chat.
 6. Pulsa **Revisar y guardar observación**. Selecciona o registra el sitio (nombre
@@ -203,6 +206,11 @@ procedencia, accesibilidad y límites del streaming.
   RAM. La UI conserva la captura para reintentar/revisar; usa Captura manual si
   la inferencia no está disponible. El SDK se carga de forma diferida.
 - **Permiso de cámara/micrófono denegado:** habilítalo en Ajustes → Aplicaciones.
+- **El micrófono quedaba en preparación aunque el permiso estaba concedido:**
+  se corrigió la solicitud redundante del permiso de audio. Actualiza el código
+  servido por Metro y recarga la app; este arreglo no requiere reconstruir el
+  dev client si ya incluye `react-native-audio-api`. La vista distingue la
+  preparación de la grabación real y ofrece reintento si el arranque no responde.
 - **`NoClassDefFoundError: Lexpo/modules/kotlin/types/AnyTypeCache`:** una
   dependencia de Expo quedó en una versión de otro SDK. `expo-audio` declara
   `expo-asset` como par con rango `*`, y npm puede instalar la última versión
@@ -227,10 +235,13 @@ procedencia, accesibilidad y límites del streaming.
   `libnativehelper.so` sí es pública. Coste: la instalación ocupa más espacio.
   Requiere prebuild y recompilar; reinstalar la APK anterior no basta.
 - **La cámara o el selector no responde:** había un bloqueo en las promesas de
-  `expo-image-picker` en una build anterior del Pixel. La nueva integración pide
-  el permiso Android con `PermissionsAndroid` y ofrece cancelación, límites de
-  espera y selección de archivo como alternativa. Esto no certifica que la
-  cámara/VisionPsy funcionen juntos: sigue siendo necesaria una foto real de placa.
+  `expo-image-picker` en el Pixel. **Tomar fotografía** ahora abre una cámara
+  integrada con `expo-camera`, encuadre, linterna y vista previa. Ejecuta
+  `npm ci`, `npm run prebuild:android` y `npx expo run:android --device` para
+  incluirla en el cliente; una recarga JS de una APK anterior no basta.
+  **Usar fotografía** conserva la imagen y la envía al análisis local.
+  **Repetir fotografía** permite volver a encuadrar. La galería sigue disponible.
+  La calidad de lectura de VisionPsy debe comprobarse con placas reales.
 - **`NoSuchMethodError` en `FontLoaderModule` / `getDirectConverter`:** se detectó
   físicamente `expo-font@57.0.3` como dependencia de `@expo/vector-icons` dentro
   de Expo 54. `package.json` ahora declara `expo-font~14.0.12`. Comprueba
