@@ -139,20 +139,32 @@ Pipeline, entirely self-hosted, no cloud tile provider at runtime:
   `/fonts/Noto Sans Regular/0-255.pbf` returns a 76 KB glyph PBF (and a
   comma-joined fallback stack resolves to it); all four
   `/sprites/ofm_f384/ofm*` files return with correct content types.
-- **Brasil — build in progress / to be re-run.** Same command with
-  `PLANETILER_AREAS=brazil`; a first attempt hit a transient Geofabrik
-  connect timeout, retried with `--http-timeout=180s --http-retries=8`.
-  The build host has ~3 GB free RAM, so it runs with `PLANETILER_XMX=2g
-  PLANETILER_EXTRA_ARGS="--storage=mmap --nodemap-storage=mmap
-  --nodemap-type=sparsearray"`; on a roomier machine drop those.
-- **On device — still pending.** That the Liberty style renders, that labels
-  (`symbol` layers) appear, and that `OfflineManager.createPack` pulls
-  tiles + glyphs + the sprite for a region have not been checked on a real
-  build — this needs the Expo dev client. The resource endpoints a pack
-  fetches were all confirmed to return 200 above.
+- **Brasil — built.** Same command with `PLANETILER_AREAS=brazil` →
+  `data/brazil.mbtiles` (~2.8 GB, 16 layers) in ~16 min. A first attempt
+  hit a transient Geofabrik connect timeout; retried with
+  `--http-timeout=180s --http-retries=8`. The build host had ~3 GB free
+  RAM, so it ran with `PLANETILER_XMX=2g PLANETILER_EXTRA_ARGS="--storage=mmap
+  --nodemap-storage=mmap --nodemap-type=sparsearray"`; drop those on a
+  roomier machine.
+- **On device (Pixel, dev client, 2026-09-10) — verified.** With
+  `EXPO_PUBLIC_MAP_STYLE_URL` pointing at the LAN tile server, the Map tab
+  rendered the Liberty style end to end: land/water/landcover fills, the
+  road network (primary/secondary lines), route shields, an airport icon,
+  and `symbol`-layer labels — country ("Brazil"), cities ("Brasília",
+  "Fortaleza", "Panama City", "La Chorrera", "Colón") and italic water
+  labels ("Gulf of Panama") — all drawn from the self-hosted `/fonts` and
+  `/sprites`. Every request in the tile server's access log was
+  `200`/`204`. Selecting a site opened its equipment detail as before.
+- **`OfflineManager.createPack` on device — verified.** Searching "Panam"
+  in the region bar and pressing *Descargar* for "Ciudad de Panamá" drove
+  ~570 requests to the tile server (60 tiles z12–14, ~390 glyph PBFs, the
+  sprite sheet — all `200`) and the region row moved `not_downloaded` →
+  `downloaded`. The download code is unchanged; this confirms it against
+  the `.mbtiles`-backed server and its new glyph/sprite routes.
 
 `src/mbtiles.ts` also has `node --test` coverage for the row flip and
-metadata parsing.
+metadata parsing. The tile server logs one line per request unless
+`QUIET=1`.
 
 **What this does not cover:** 3D terrain / hillshade (the `ne2_shaded` layer
 is dropped), any area outside Brazil/Panamá (add a Geofabrik name to
@@ -287,16 +299,15 @@ quantity".
 
 ## 11. What Still Needs a Device
 
-- **On-device rendering of the Liberty style (§4 "Status").** The style,
-  tiles, glyphs and sprites were all verified to serve correctly over HTTP,
-  but that MapLibre renders them — and that `symbol` layers actually draw
-  street and place labels — has not been seen on a real build.
-- `OfflineManager.createPack` against the `.mbtiles`-backed server. The
-  earlier server's packs downloaded on device; the pack code is unchanged
-  and every resource endpoint a pack fetches (tiles, `/fonts`, `/sprites`)
-  now returns 200, but the end-to-end download has not been re-run.
+The OpenFreeMap basemap, its glyphs and sprites, and `OfflineManager.createPack`
+against it were all verified on a Pixel dev client (§4 "Status"). Still open:
+
+- Street-name labels (`transportation_name`) at the very top zooms — place
+  and city labels were confirmed; a close-in check of an individual road
+  name has not been done.
 - Tap hit-testing on circle layers — the screen test simulates the press
-  event, it does not verify MapLibre's hitbox behaviour.
+  event, it does not verify MapLibre's hitbox behaviour. (Site selection
+  itself *was* exercised on device.)
 - Performance with a realistic number of sites. There is still no clustering.
 
 ## 12. Not Implemented

@@ -221,7 +221,20 @@ function handleStyleRequest(
 export function main(): void {
   const sources = openTileSources();
 
+  // One line per request. A LAN tile server with no request visibility is
+  // hard to debug from a phone; `QUIET=1` turns it off.
+  const quiet = process.env.QUIET === '1';
+
   const server = createServer((request: IncomingMessage, response: ServerResponse) => {
+    const startedAt = Date.now();
+    if (!quiet) {
+      response.on('finish', () => {
+        console.log(
+          `[tileserver] ${request.socket.remoteAddress} ${request.method} ${request.url} ` +
+            `${response.statusCode} ${Date.now() - startedAt}ms`
+        );
+      });
+    }
     try {
       const path = (request.url ?? '/').split('?')[0];
 
