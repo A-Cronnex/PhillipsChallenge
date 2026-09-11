@@ -65,3 +65,40 @@ test('microphone denial cancels the already-opened stream and permits retry', as
   await act(async () => { await test.result.current.start(); });
   expect(test.result.current.state.phase).toBe('listening');
 });
+
+test('a stalled microphone times out, releases a late recorder and allows retry', async () => {
+  jest.useFakeTimers();
+  const test = setup();
+  try {
+    let resolveMic!: (value: typeof test.mic) => void;
+    jest.mocked(startMicrophone).mockReturnValueOnce(new Promise(resolve => { resolveMic = resolve; }));
+    let starting!: Promise<void>;
+    await act(async () => { starting = test.result.current.start(); });
+    expect(test.result.current.state).toEqual({ phase: 'starting', step: 'microphone' });
+    act(() => jest.advanceTimersByTime(20_000));
+    expect(test.result.current.state).toMatchObject({ phase: 'error', message: expect.stringContaining('micrófono no respondió') });
+    expect(test.session.cancel).toHaveBeenCalled();
+    await act(async () => { resolveMic(test.mic); await starting; });
+    expect(test.mic.cancel).toHaveBeenCalled();
+    expect(test.final).not.toHaveBeenCalled();
+    await act(async () => { await test.result.current.start(); });
+    expect(test.result.current.state.phase).toBe('listening');
+  } finally { test.unmount(); jest.useRealTimers(); }
+});
+
+test('model preparation times out without opening the microphone or accepting a late stream', async () => {
+  jest.useFakeTimers();
+  const test = setup();
+  try {
+    let resolveSpeech!: (value: SpeechSession) => void;
+    jest.mocked(test.runtime.openSpeechSession!).mockReturnValueOnce(new Promise(resolve => { resolveSpeech = resolve; }));
+    let starting!: Promise<void>;
+    act(() => { starting = test.result.current.start(); });
+    expect(test.result.current.state).toEqual({ phase: 'starting', step: 'model' });
+    act(() => jest.advanceTimersByTime(120_000));
+    expect(test.result.current.state.phase).toBe('error');
+    await act(async () => { resolveSpeech(test.session); await starting; });
+    expect(test.session.cancel).toHaveBeenCalled();
+    expect(startMicrophone).not.toHaveBeenCalled();
+  } finally { test.unmount(); jest.useRealTimers(); }
+});
