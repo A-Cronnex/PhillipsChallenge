@@ -10,10 +10,18 @@ jest.mock('@react-navigation/native', () => ({ useIsFocused: () => true }));
 jest.mock('@expo/vector-icons', () => ({ MaterialIcons: () => null }));
 jest.mock('../../../lib/container', () => ({ getRepositories: jest.fn() }));
 jest.mock('../../../lib/id', () => ({ newId: () => 'conversation-1' }));
-jest.mock('../../../services/capture/photo', () => ({ pickNameplate: jest.fn() }));
+jest.mock('../../../services/capture/photo', () => ({ pickNameplate: jest.fn(), retainPhoto: () => '/camera.jpg' }));
+jest.mock('../../../features/conversations/ui/NameplateCamera', () => ({
+  NameplateCamera: ({ onCaptured, onCancel }: { onCaptured: (photo: unknown) => void; onCancel: () => void }) => {
+    const { Button, View } = require('react-native');
+    return <View><Button title="Usar fotografía" onPress={() => onCaptured({ uri: '/temp.jpg', width: 100, height: 100 })} /><Button title="Cerrar cámara" onPress={onCancel} /></View>;
+  },
+}));
 jest.mock('../../../services/capture/microphone', () => ({ startMicrophone: jest.fn() }));
 jest.mock('../../../features/conversations/ui/ConversationReview', () => ({ ConversationReview: () => null }));
 let save: jest.Mock;
+// Complete messages can now take over five seconds to reveal character by character.
+jest.setTimeout(10_000);
 function runtime(): AiRuntime {
   return { isReady: async () => true, prepare: async () => {}, extractFromText: jest.fn(async () => ({ values: [] })),
     extractFromImage: jest.fn(async (): Promise<AgentExtraction> => ({ nameplate: 'detected', values: [{ field: 'brand', value: 'Philips', status: 'confirmed', confidence: 'high' }] })),
@@ -95,7 +103,25 @@ test('can capture and review a plate without preparing the text model first', as
   await waitFor(() => expect(screen.getByLabelText('Capturar placa con cámara').props.accessibilityState.disabled).toBe(false));
   fireEvent.press(screen.getByLabelText('Capturar placa con cámara'));
   fireEvent.press(screen.getByText('Tomar fotografía'));
+  expect(screen.getByText('Usar fotografía')).toBeTruthy();
+  expect(ai.extractFromImage).not.toHaveBeenCalled();
+  fireEvent.press(screen.getByText('Usar fotografía'));
   await waitFor(() => expect(screen.getByText('Confirma lo que leí')).toBeTruthy());
   expect(ai.prepare).not.toHaveBeenCalled();
   expect(ai.extractFromImage).toHaveBeenCalled();
+});
+
+test('preparation is labelled separately and never reports recording before microphone start', async () => {
+  const ai = runtime();
+  ai.openSpeechSession = () => new Promise(() => {});
+  render(<ConversationScreen userId="u1" runtime={ai} />);
+  await waitFor(() => expect(screen.getByLabelText('Mensaje para el agente').props.editable).toBe(true));
+  fireEvent.press(screen.getByLabelText('Hablar con el agente'));
+  expect(screen.getByText('Preparando voz')).toBeTruthy();
+  expect(screen.getByLabelText('Cancelar preparación de voz')).toBeTruthy();
+  expect(screen.queryByLabelText('Cancelar grabación')).toBeNull();
+  expect(screen.queryByTestId('ai-orb-listening')).toBeNull();
+  expect(startMicrophone).not.toHaveBeenCalled();
+  fireEvent.press(screen.getByLabelText('Cancelar preparación de voz'));
+  expect(screen.getByTestId('ai-orb-idle')).toBeTruthy();
 });

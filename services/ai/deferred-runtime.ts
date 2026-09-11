@@ -10,7 +10,16 @@ export function deferredRuntime(resolve: () => Promise<AiRuntime>): AiRuntime {
   }
   return {
     isReady: () => runtime?.isReady() ?? Promise.resolve(false),
-    prepare: async () => (await get()).prepare(),
+    // Unlike `isReady`, this does resolve the real runtime: telling the user
+    // whether the weights are on the device requires asking QVAC's cache. That
+    // imports the SDK but downloads nothing and loads no weights, and the
+    // screen has already painted by the time the UI asks.
+    modelReadiness: async () => {
+      const current = await get();
+      if (!current.modelReadiness) throw new Error('El motor no informa el estado de los modelos.');
+      return current.modelReadiness();
+    },
+    prepare: async onProgress => (await get()).prepare(onProgress),
     extractFromText: async request => (await get()).extractFromText(request),
     extractFromImage: async request => (await get()).extractFromImage(request),
     transcribe: async path => (await get()).transcribe(path),
