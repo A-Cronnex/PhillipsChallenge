@@ -76,6 +76,17 @@ This is consistent with MapLibre as the renderer above — MapLibre just
 displays whatever tile source you give it; self-hosting only changes
 where those tiles come from, not the rendering library.
 
+**Selected source (2026-09-10): OpenFreeMap.** Vector tiles are built with
+**Planetiler** (OpenMapTiles schema) and served, together with OpenFreeMap's
+MIT-licensed **Liberty** style, its glyph PBFs and its sprite sheet, by
+`tileserver/` over plain HTTP `{z}/{x}/{y}.pbf` (`docs/maps.md` §4). Only
+OpenFreeMap's *data and assets* are used — its hosted endpoints
+(`openfreemap.org`, `openfreemap.com`) are a third-party CDN and are on the
+forbidden-host list in `services/maps/tile-source.ts`. `.pmtiles` is still
+not the distribution format: `@maplibre/maplibre-react-native` cannot load
+it, so a Planetiler `.mbtiles` file is served as HTTP tiles instead
+(`docs/maps.md` §5).
+
 ## 5. Backend — Confirmed: Node.js + PostgreSQL (Option A)
 
 **Confirmed.** Option A below is the decision. The implementation lives in
@@ -242,7 +253,7 @@ different QVAC SDK backends and do fundamentally different jobs:
 | | TranslatePsy-EuroNano | MedPsy |
 |---|---|---|
 | Engine | Bergamot NMT (Marian, seq2seq) | Fabric LLM (`llama.cpp`-based) |
-| Job | Sentence-level translation only | Reasoning, follow-up questions, structured extraction, confidence scoring |
+| Job | Sentence-level translation only | Reasoning, structured extraction, confidence scoring |
 | Can produce the JSON shape in `docs/ai-agent.md` §7? | No | Yes |
 
 TranslatePsy cannot replace MedPsy — it has no instruction-following or
@@ -272,14 +283,31 @@ Spanish text preserved as-is for storage (see below)
         ↓
 TranslatePsy-EuroNano (es → en) — working copy only, for MedPsy
         ↓
-MedPsy — extraction, follow-up question generation, confidence
-        ↓
-TranslatePsy-EuroNano (en → es) — for follow-up questions shown to the user
+MedPsy — extraction and confidence, constrained to the JSON schema in
+docs/ai-agent.md §7 (no free-text follow-up field — see below)
         ↓
 Structured JSON: field values and notes stored in the user's original
 language (Spanish); English is only MedPsy's internal working copy and
 is not persisted as the source of truth
+        ↓
+The application composes the next question from domain state — which
+required fields are still unknown — already in Spanish, since it is
+built from the field labels in
+`features/conversations/domain/fields.ts`, not from anything the model
+wrote. No en→es translation step is needed for it.
 ```
+
+Confirmed (2026-09-10): **MedPsy's JSON contract has no
+`followUpQuestion` field.** It used to, and the model's own text was
+translated en→es for display. That text was frequently incoherent —
+MedPsy has no instruction-following path for "the user asked you
+something instead of answering," so it would hallucinate filler in
+English, and the translation pass made the result worse, not better.
+The agent's next question is now assembled entirely by the application
+from what `docs/ai-agent.md` §4's required fields still lack
+(`features/conversations/application/conversation-orchestrator.ts`),
+which is deterministic, testable without a model, and immune to
+translation drift because it never touches TranslatePsy at all.
 
 Confirmed: **`notes` and other free-text fields are stored in the
 user's preferred language**, not in the English text MedPsy reasoned

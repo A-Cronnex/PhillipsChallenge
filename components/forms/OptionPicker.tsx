@@ -96,7 +96,7 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
     borderWidth: 1,
     borderColor: colors.outline,
-    borderRadius: 4,
+    borderRadius: 12,
   },
   option: {
     minHeight: MIN_TOUCH_TARGET,

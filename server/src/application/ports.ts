@@ -67,3 +67,41 @@ export interface EntityRef {
   entityType: SyncEntityType;
   entityId: string;
 }
+
+// ---------------------------------------------------------------------------
+// Download (pull) direction
+// ---------------------------------------------------------------------------
+
+/**
+ * The scope one device is entitled to receive, already validated.
+ *
+ * Resolved from the request rather than from server-side state because the
+ * subset a field device needs is the places whose map it downloaded, and only
+ * the device knows that (docs/maps.md §15, docs/offline-sync.md §10).
+ */
+export interface PullScope {
+  /** Bounding boxes, in [west, south, east, north] order. */
+  regions: { west: number; south: number; east: number; north: number }[];
+  /** Sites the device already holds, so coordinate-less ones stay updated. */
+  knownSiteIds: string[];
+  /** Conversations are scoped by their owner, not by place. */
+  userId: string;
+}
+
+export interface PullPage {
+  changes: import('../../../types/sync-contract').PulledChange[];
+  /** Highest `change_seq` in this page, or the incoming cursor when empty. */
+  cursor: string;
+  hasMore: boolean;
+}
+
+export interface SyncPullStore {
+  /**
+   * Reads one page of changes at or after `cursor`, restricted to `scope`.
+   *
+   * Ordered by the global change sequence so applying the pages in order
+   * converges, and so re-sending the same cursor returns the same page
+   * (server/migrations/002_pull_cursor.sql).
+   */
+  readChanges(cursor: string | null, scope: PullScope, limit: number): Promise<PullPage>;
+}

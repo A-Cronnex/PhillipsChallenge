@@ -1,13 +1,16 @@
-import { SyncPanel } from '../../synchronization/ui/SyncPanel';
-import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { SyncIconButton } from '../../synchronization/ui/SyncIconButton';
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { BarChart, type BarChartDatum } from '../../../components/ui/BarChart';
+import { RadialGauge } from '../../../components/ui/RadialGauge';
 import { EmptyState, ErrorState, LoadingState } from '../../../components/ui/ScreenStates';
-import { colors, spacing, typography } from '../../../lib/theme';
+import { colors, MIN_TOUCH_TARGET, spacing, typography } from '../../../lib/theme';
 import { SYNC_STATUSES } from '../../../types/domain';
-import type {
-  AgeBucketCount,
-  CategoryCount,
-  SiteMetrics,
+import {
+  confidenceScore,
+  type AgeBucketCount,
+  type CategoryCount,
+  type SiteMetrics,
 } from '../domain/metrics';
 import {
   AGING_SITES_CAPTION,
@@ -57,12 +60,34 @@ export function DashboardScreen() {
 
   if (metrics.totals.observations === 0) {
     return (
-      <View style={{ flex: 1 }}><SyncPanel onComplete={dashboard.reload} /><EmptyState
-        title="Todavía no hay observaciones"
-        message="Registra una observación en Captura o con el Agente y las métricas aparecerán aquí. El tablero se calcula en el dispositivo, sin conexión."
-      /></View>
+      <View style={{ flex: 1 }}>
+        <View style={styles.topBar}>
+          <Text style={styles.topBarTitle}>Sincronización</Text>
+          <SyncIconButton onComplete={dashboard.reload} />
+        </View>
+        <EmptyState
+          title="Todavía no hay observaciones"
+          message="Registra una observación en Captura o con el Agente y las métricas aparecerán aquí. El tablero se calcula en el dispositivo, sin conexión."
+        />
+      </View>
     );
   }
+
+  const scopeSite = dashboard.scopeSite;
+  const scopedSiteMetrics = scopeSite
+    ? (metrics.sites.find((site) => site.siteId === scopeSite.siteId) ?? null)
+    : null;
+  const scopeRegion = scopeSite
+    ? [scopeSite.city, scopeSite.country].filter(Boolean).join(', ') ||
+      'Ubicación sin detalle'
+    : null;
+  const confidenceBarData: BarChartDatum[] = scopedSiteMetrics
+    ? (['high', 'medium', 'low', 'unrated'] as const).map((level) => ({
+        key: level,
+        label: CONFIDENCE_LABELS[level],
+        value: scopedSiteMetrics.byConfidence[level],
+      }))
+    : [];
 
   return (
     <ScrollView
@@ -78,13 +103,12 @@ export function DashboardScreen() {
         />
       }
     >
-      <SyncPanel onComplete={dashboard.reload} />
-      <Text style={styles.caption} testID="dashboard-scope">
-        Calculado en este dispositivo el {computedFor}, a partir de{' '}
-        {metrics.totals.observations} observación(es) guardada(s) localmente.
-        Incluye lo que aún no se ha sincronizado.
-      </Text>
+      <View style={styles.topBar}>
+        <Text style={styles.topBarTitle}>Sincronización</Text>
+        <SyncIconButton onComplete={dashboard.reload} />
+      </View>
 
+      {/* Statistics come first, ahead of sync and scope context, per product decision. */}
       <View style={styles.tiles}>
         <Tile label="Sitios" value={metrics.totals.sites} testID="tile-sites" />
         <Tile
@@ -105,6 +129,12 @@ export function DashboardScreen() {
         <Tile label="Marcas" value={metrics.totals.brands} testID="tile-brands" />
       </View>
 
+      <Text style={styles.caption} testID="dashboard-scope">
+        Calculado en este dispositivo el {computedFor}, a partir de{' '}
+        {metrics.totals.observations} observación(es) guardada(s) localmente.
+        Incluye lo que aún no se ha sincronizado.
+      </Text>
+
       {/*
         Said once, at the top, rather than qualifying every number below:
         these are field reports, not a verified installed base. Until duplicate
@@ -115,6 +145,43 @@ export function DashboardScreen() {
         Son observaciones de campo, no un inventario verificado: todavía no se
         detectan duplicados entre reportes.
       </Text>
+
+      {scopeSite ? (
+        <Section
+          title={`Resumen del cliente: ${scopeSite.name}`}
+          caption={scopeRegion ?? undefined}
+          testID="section-customer-summary"
+        >
+          {scopedSiteMetrics ? (
+            <>
+              <View style={styles.gaugeRow}>
+                <RadialGauge
+                  value={confidenceScore(scopedSiteMetrics.byConfidence)}
+                  label="Confianza"
+                  testID="customer-summary-gauge"
+                />
+              </View>
+              <Text style={styles.caption}>
+                {scopedSiteMetrics.observations} observación(es) de este sitio
+                consideradas en el indicador.
+              </Text>
+            </>
+          ) : (
+            <Text style={styles.empty} testID="customer-summary-empty">
+              No hay observaciones locales para este sitio todavía.
+            </Text>
+          )}
+          <Pressable
+            onPress={dashboard.clearScope}
+            style={styles.clearScopeButton}
+            accessibilityRole="button"
+            accessibilityLabel="Quitar resumen del cliente"
+            testID="clear-customer-summary"
+          >
+            <Text style={styles.clearScopeButtonText}>Quitar resumen del cliente</Text>
+          </Pressable>
+        </Section>
+      ) : null}
 
       <Section title="Equipos por modalidad" testID="section-modality">
         <CategoryList
@@ -248,6 +315,16 @@ export function DashboardScreen() {
           )
         )}
       </Section>
+
+      {scopeSite && scopedSiteMetrics ? (
+        <Section
+          title="Confiabilidad de las observaciones"
+          caption={`Frecuencia por nivel de confiabilidad en ${scopeSite.name}.`}
+          testID="section-confidence-frequency"
+        >
+          <BarChart data={confidenceBarData} testID="confidence-frequency-chart" />
+        </Section>
+      ) : null}
     </ScrollView>
   );
 }
@@ -379,13 +456,32 @@ function SiteList({
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
   content: { padding: spacing.md, gap: spacing.md, paddingBottom: spacing.xl },
+  topBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.sm,
+  },
+  topBarTitle: { ...typography.titleMedium, color: colors.onSurface },
+  gaugeRow: { alignItems: 'center', paddingVertical: spacing.sm },
+  clearScopeButton: {
+    minHeight: MIN_TOUCH_TARGET,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: spacing.sm,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.outline,
+  },
+  clearScopeButtonText: { ...typography.titleMedium, color: colors.onSurface },
   caption: { ...typography.bodyMedium, color: colors.onSurfaceVariant },
   tiles: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   tile: {
     flexGrow: 1,
     minWidth: 96,
     padding: spacing.md,
-    borderRadius: 8,
+    borderRadius: 20,
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.surfaceVariant,
@@ -394,7 +490,7 @@ const styles = StyleSheet.create({
   tileLabel: { ...typography.labelMedium, color: colors.onSurfaceVariant },
   section: {
     padding: spacing.md,
-    borderRadius: 8,
+    borderRadius: 20,
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.surfaceVariant,

@@ -13,10 +13,15 @@ const { createCatalogRepository } = require('../database/repositories/catalog-re
 const { createObservationRepository } = require('../database/repositories/observation-repository.ts');
 const { createConversationRepository } = require('../database/repositories/conversation-repository.ts');
 const { createSyncRepository } = require('../database/repositories/sync-repository.ts');
+const { createMapRegionRepository } = require('../database/repositories/map-region-repository.ts');
+const { createSiteRepository } = require('../database/repositories/site-repository.ts');
 const { captureObservation } = require('../features/observations/application/capture-observation.ts');
 const { saveConversation } = require('../features/conversations/application/save-conversation.ts');
 const { startConversation } = require('../features/conversations/domain/conversation.ts');
 const { emptyObservationDraft } = require('../features/observations/domain/observation.ts');
+const { seedDummyInstalledBase, DUMMY_SITES } = require('../features/catalog/application/seed-dummy-installed-base.ts');
+const { seedPredefinedRegions } = require('../features/maps/application/seed-predefined-regions.ts');
+const { PREDEFINED_REGIONS } = require('../features/maps/domain/predefined-regions.ts');
 const raw = new DatabaseSync(':memory:');
 raw.exec('PRAGMA foreign_keys = ON');
 const db = {
@@ -69,5 +74,72 @@ const db = {
   assert.ok(types.lastIndexOf('equipment') < types.indexOf('observation'));
   assert.ok(types.indexOf('conversation') < types.indexOf('observation'));
   assert.deepEqual(raw.prepare('PRAGMA foreign_key_check').all(), []);
-  console.log('SQLite integration passed: fresh setup, duplicates, equipment history, atomic rollback, conversation recovery, idempotent finalization, sources, queue dependency order and foreign keys.');
+
+  // Demo data seed (real Dashboard/Capture/Map task): both seed steps against
+  // real SQLite, not fakes, so CHECK constraints and foreign keys are what
+  // actually validate the shape.
+  const mapRegions = createMapRegionRepository(db);
+  const seedNow = () => new Date('2026-09-10T00:00:00Z');
+  await seedDummyInstalledBase({ catalog, observations, userId: user.id, now: seedNow, newId: randomUUID });
+  await seedPredefinedRegions(mapRegions);
+
+  const siteCount = () => raw.prepare('SELECT count(*) AS n FROM sites').get().n;
+  const equipmentCount = () => raw.prepare('SELECT count(*) AS n FROM equipment').get().n;
+  const regionCount = () => raw.prepare('SELECT count(*) AS n FROM map_regions').get().n;
+
+  const expectedEquipment = DUMMY_SITES.reduce((sum, site) => sum + site.equipment.length, 0);
+  // +2 sites ('Sitio de prueba', 'Otro sitio') and +1 equipment row from the
+  // manual-capture checks above — everything else in this block is new.
+  assert.equal(siteCount(), DUMMY_SITES.length + 2);
+  assert.equal(equipmentCount(), expectedEquipment + 1);
+  assert.equal(regionCount(), PREDEFINED_REGIONS.length);
+
+  for (const region of PREDEFINED_REGIONS) {
+    const row = raw.prepare('SELECT download_status, download_progress FROM map_regions WHERE id = ?').get(region.id);
+    assert.ok(row, `missing seeded region row: ${region.id}`);
+    assert.equal(row.download_status, 'not_downloaded');
+    assert.equal(row.download_progress, 0);
+  }
+  for (const site of DUMMY_SITES) {
+    const row = raw.prepare('SELECT latitude, longitude FROM sites WHERE name = ?').get(site.name);
+    assert.ok(row, `missing seeded site: ${site.name}`);
+    assert.ok(Number.isFinite(row.latitude) && Number.isFinite(row.longitude));
+  }
+
+  // Re-running both seed steps (as happens on every app launch) must not
+  // duplicate a single row.
+  await seedDummyInstalledBase({ catalog, observations, userId: user.id, now: seedNow, newId: randomUUID });
+  await seedPredefinedRegions(mapRegions);
+  assert.equal(siteCount(), DUMMY_SITES.length + 2);
+  assert.equal(equipmentCount(), expectedEquipment + 1);
+  assert.equal(regionCount(), PREDEFINED_REGIONS.length);
+  assert.deepEqual(raw.prepare('PRAGMA foreign_key_check').all(), []);
+
+  // Observation-history screen: SiteRepository.getSite and
+  // ObservationRepository.listBySite, against real SQLite.
+  const siteRepository = createSiteRepository(db);
+  const pacific = DUMMY_SITES.find(site => site.name === 'Hospital DemoCare Pacific');
+  const pacificRow = raw.prepare('SELECT id FROM sites WHERE name = ?').get(pacific.name);
+  const pacificSite = await siteRepository.getSite(pacificRow.id);
+  assert.equal(pacificSite.name, pacific.name);
+  assert.equal(pacificSite.city, pacific.city);
+  assert.equal(pacificSite.country, pacific.country);
+  assert.equal(await siteRepository.getSite(randomUUID()), null);
+
+  const pacificObservations = await observations.listBySite(pacificRow.id);
+  assert.equal(pacificObservations.length, pacific.equipment.length);
+  // Newest visit_date first (both rows share a date in the dummy dataset, so
+  // this also exercises that the query and mapping do not throw on ties).
+  assert.ok(pacificObservations.every(o => o.siteId === pacificRow.id));
+  assert.ok(pacificObservations.every(o => o.createdBy === user.id));
+  assert.ok(pacificObservations.every(o => o.createdByName === user.name));
+  assert.ok(pacificObservations.every(o => o.syncStatus === 'pending'));
+  assert.deepEqual(new Set(pacificObservations.map(o => o.brand)),
+    new Set(pacific.equipment.map(e => e.brand)));
+  // notes is read (unlike the dashboard's aggregate projection, which omits it).
+  assert.ok(pacificObservations.every(o => typeof o.notes === 'string' && o.notes.length > 0));
+
+  assert.deepEqual(await observations.listBySite(randomUUID()), []);
+
+  console.log('SQLite integration passed: fresh setup, duplicates, equipment history, atomic rollback, conversation recovery, idempotent finalization, sources, queue dependency order, foreign keys, demo data seeding (sites, equipment, map regions — idempotent on re-run), and the observation-history reads (getSite, listBySite).');
 })().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => raw.close());

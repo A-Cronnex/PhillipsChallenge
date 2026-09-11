@@ -86,7 +86,7 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
-    borderRadius: 4,
+    borderRadius: 12,
   },
   label: { ...typography.labelMedium },
   description: {

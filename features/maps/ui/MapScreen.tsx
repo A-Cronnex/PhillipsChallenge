@@ -5,11 +5,13 @@ import {
   Map,
   type PressEventWithFeatures,
 } from '@maplibre/maplibre-react-native';
-import { useMemo } from 'react';
+import { useRouter } from 'expo-router';
+import { useMemo, useState } from 'react';
 import type { NativeSyntheticEvent } from 'react-native';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { EmptyState, ErrorState, LoadingState } from '../../../components/ui/ScreenStates';
+import { setDashboardScopeSite } from '../../../lib/dashboard-scope';
 import { colors, MIN_TOUCH_TARGET, spacing, typography } from '../../../lib/theme';
 import { basemapConfig } from '../../../services/maps/tile-source';
 import { hasBasemap, resolveMapStyle } from '../../../services/maps/style';
@@ -35,6 +37,7 @@ const FALLBACK_ZOOM = 1;
  */
 export function MapScreen() {
   const map = useMapData();
+  const router = useRouter();
 
   const mapStyle = useMemo(() => {
     try {
@@ -54,6 +57,21 @@ export function MapScreen() {
     [map.data]
   );
 
+  const [regionQuery, setRegionQuery] = useState('');
+  const trimmedRegionQuery = regionQuery.trim();
+  // Nothing shows until the user actually searches: the default view is
+  // just the map and the site-count indicator below it, per product
+  // decision — no region list sits on screen unasked (CLAUDE.md §10 still
+  // holds once a query is typed: map cache state and business data stay in
+  // separate lists).
+  const visibleRegions = useMemo(() => {
+    const query = trimmedRegionQuery.toLowerCase();
+    if (!query) return [];
+    return (map.data?.regions ?? []).filter((region) =>
+      region.name.toLowerCase().includes(query)
+    );
+  }, [trimmedRegionQuery, map.data]);
+
   if (map.phase === 'loading') {
     return <LoadingState message="Cargando sitios y equipos guardados…" />;
   }
@@ -68,7 +86,7 @@ export function MapScreen() {
     );
   }
 
-  const { dataset, regions, center } = map.data;
+  const { dataset, center } = map.data;
   const hasAnySite = dataset.sites.length > 0 || dataset.unmappableSites.length > 0;
 
   if (!hasAnySite) {
@@ -83,6 +101,13 @@ export function MapScreen() {
   function handleSitePress(
     event: NativeSyntheticEvent<PressEventWithFeatures>
   ): void {
+    // A press on a feature bubbles from the Source up to the Map's own
+    // onPress unless stopped (@maplibre/maplibre-react-native's own
+    // documented behaviour). Without this, selecting a site immediately
+    // triggered the Map's onPress={map.clearSelection} right after —
+    // selection and deselection in the same tap, so nothing ever appeared
+    // selected.
+    event.stopPropagation();
     const feature = event.nativeEvent.features[0];
     const siteId = feature?.properties?.siteId;
     if (typeof siteId === 'string') map.selectSite(siteId);
@@ -94,6 +119,56 @@ export function MapScreen() {
 
   return (
     <View style={styles.screen}>
+      <View style={styles.searchBar} testID="map-region-search">
+        <TextInput
+          value={regionQuery}
+          onChangeText={setRegionQuery}
+          placeholder="Buscar mapas para descargar"
+          placeholderTextColor={colors.onSurfaceVariant}
+          style={styles.searchInput}
+          accessibilityLabel="Buscar mapas para descargar"
+          testID="map-region-search-input"
+          autoCorrect={false}
+          autoCapitalize="none"
+        />
+        {trimmedRegionQuery.length > 0 ? (
+          <View style={styles.searchResults} testID="map-region-search-results">
+            {visibleRegions.length === 0 ? (
+              <Text style={styles.detailEmpty}>
+                Ningún mapa coincide con «{trimmedRegionQuery}».
+              </Text>
+            ) : (
+              visibleRegions.map((region) => {
+                const canDownload =
+                  region.status === 'not_downloaded' || region.status === 'failed';
+                return (
+                  <View key={region.id} style={styles.regionItem}>
+                    <Text style={styles.regionRow}>
+                      {region.name} — {region.status}
+                      {region.status === 'downloading'
+                        ? ` (${Math.round(region.progress * 100)}%)`
+                        : ''}
+                      {region.lastError ? ` · ${region.lastError}` : ''}
+                    </Text>
+                    {canDownload ? (
+                      <Pressable
+                        onPress={() => void map.downloadRegion(region.id)}
+                        style={styles.downloadButton}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Descargar región ${region.name}`}
+                        testID={`download-region-${region.id}`}
+                      >
+                        <Text style={styles.downloadButtonText}>Descargar</Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
+                );
+              })
+            )}
+          </View>
+        ) : null}
+      </View>
+
       <View style={styles.mapContainer}>
         <Map
           style={styles.map}
@@ -114,6 +189,13 @@ export function MapScreen() {
             id={SITES_SOURCE_ID}
             data={collection}
             onPress={handleSitePress}
+            // A site's circle can render as small as a 7px radius (paint
+            // below, for a site with little equipment) — well under the
+            // 48dp touch target CLAUDE.md §13 requires. The library's own
+            // default hitbox (44x44) already pads the tap point, but this
+            // widens it further so a field user does not have to land on
+            // the rendered dot pixel-for-pixel.
+            hitbox={{ top: 32, bottom: 32, left: 32, right: 32 }}
           >
             <Layer
               id={SITE_CIRCLES_LAYER_ID}
@@ -235,6 +317,37 @@ export function MapScreen() {
             )}
 
             <Pressable
+              onPress={() => router.push({ pathname: '/site/[siteId]', params: { siteId: map.selectedSite!.siteId } })}
+              style={styles.observationsButton}
+              accessibilityRole="button"
+              accessibilityLabel="Ver observaciones de este sitio"
+              testID="view-observations"
+            >
+              <Text style={styles.observationsButtonText}>Ver observaciones</Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => {
+                const site = map.selectedSite!;
+                setDashboardScopeSite({
+                  siteId: site.siteId,
+                  name: site.name,
+                  city: site.city,
+                  country: site.country,
+                });
+                router.push('/dashboard');
+              }}
+              style={styles.summaryButton}
+              accessibilityRole="button"
+              accessibilityLabel="Mostrar resumen del cliente en el tablero"
+              testID="show-customer-summary"
+            >
+              <Text style={styles.summaryButtonText}>
+                Mostrar resumen del cliente en el tablero
+              </Text>
+            </Pressable>
+
+            <Pressable
               onPress={map.clearSelection}
               style={styles.clearButton}
               accessibilityRole="button"
@@ -254,29 +367,6 @@ export function MapScreen() {
             </Text>
           </View>
         )}
-
-        <View style={styles.regionSection} testID="map-cache-state">
-          <Text style={styles.sectionTitle}>Regiones de mapa descargadas</Text>
-          {regions.length === 0 ? (
-            <Text style={styles.detailEmpty}>
-              Ninguna región descargada.
-            </Text>
-          ) : (
-            regions.map((region) => (
-              <Text key={region.id} style={styles.regionRow}>
-                {region.name} — {region.status}
-                {region.status === 'downloading'
-                  ? ` (${Math.round(region.progress * 100)}%)`
-                  : ''}
-                {region.lastError ? ` · ${region.lastError}` : ''}
-              </Text>
-            ))
-          )}
-          <Text style={styles.regionNote}>
-            Las regiones de mapa y los datos de negocio se descargan por
-            separado: descargar un mapa no descarga sitios ni equipos.
-          </Text>
-        </View>
       </ScrollView>
     </View>
   );
@@ -325,7 +415,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
   },
   panelContent: { padding: spacing.md, gap: spacing.sm },
-  banner: { padding: spacing.sm, borderRadius: 4, gap: spacing.xs },
+  banner: { padding: spacing.sm, borderRadius: 12, gap: spacing.xs },
   bannerTitle: { ...typography.labelMedium },
   bannerBody: { ...typography.bodyMedium, color: colors.onSurface },
   detailTitle: { ...typography.titleMedium, color: colors.onSurface },
@@ -363,31 +453,73 @@ const styles = StyleSheet.create({
     marginTop: spacing.xs,
     fontStyle: 'italic',
   },
+  observationsButton: {
+    minHeight: MIN_TOUCH_TARGET,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: spacing.md,
+    borderRadius: 12,
+    backgroundColor: colors.primary,
+  },
+  observationsButtonText: { ...typography.titleMedium, color: colors.onPrimary },
   clearButton: {
     minHeight: MIN_TOUCH_TARGET,
     justifyContent: 'center',
     alignItems: 'center',
     marginTop: spacing.md,
-    borderRadius: 4,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: colors.outline,
   },
   clearButtonText: { ...typography.titleMedium, color: colors.onSurface },
-  regionSection: {
-    marginTop: spacing.md,
-    paddingTop: spacing.md,
-    borderTopWidth: 1,
-    borderTopColor: colors.surfaceVariant,
+  regionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+    marginTop: spacing.xs,
   },
-  sectionTitle: { ...typography.titleMedium, color: colors.onSurface },
   regionRow: {
     ...typography.bodyMedium,
     color: colors.onSurface,
-    marginTop: spacing.xs,
+    flex: 1,
   },
-  regionNote: {
-    ...typography.bodyMedium,
-    color: colors.onSurfaceVariant,
-    marginTop: spacing.sm,
+  downloadButton: {
+    minHeight: MIN_TOUCH_TARGET,
+    justifyContent: 'center',
+    paddingHorizontal: spacing.sm,
+    borderRadius: 12,
+    backgroundColor: colors.primary,
+  },
+  downloadButtonText: { ...typography.labelMedium, color: colors.onPrimary },
+  searchBar: {
+    padding: spacing.md,
+    paddingBottom: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.surfaceVariant,
+    backgroundColor: colors.surface,
+  },
+  searchInput: {
+    minHeight: MIN_TOUCH_TARGET,
+    borderWidth: 1,
+    borderColor: colors.outline,
+    borderRadius: 12,
+    paddingHorizontal: spacing.md,
+    ...typography.bodyLarge,
+    color: colors.onSurface,
+  },
+  searchResults: { marginTop: spacing.sm, gap: spacing.xs },
+  summaryButton: {
+    minHeight: MIN_TOUCH_TARGET,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: spacing.md,
+    borderRadius: 12,
+    backgroundColor: colors.surfaceVariant,
+  },
+  summaryButtonText: {
+    ...typography.titleMedium,
+    color: colors.onSurface,
+    textAlign: 'center',
   },
 });

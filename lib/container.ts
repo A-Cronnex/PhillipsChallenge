@@ -20,6 +20,7 @@ import { createObservationRepository } from '../database/repositories/observatio
 import { createSettingsRepository } from '../database/repositories/settings-repository';
 import { createSiteRepository } from '../database/repositories/site-repository';
 import { createSyncRepository } from '../database/repositories/sync-repository';
+import { createSyncDownloadRepository } from '../database/repositories/sync-download-repository';
 import { createUserRepository } from '../database/repositories/user-repository';
 import type { UserRepository } from '../features/authentication/application/ports';
 import type {
@@ -35,6 +36,7 @@ import type { SiteRepository } from '../features/sites/application/ports';
 import type {
   DeviceIdentityRepository,
   SyncQueueRepository,
+  SyncDownloadRepository,
   SyncTransport,
 } from '../features/synchronization/application/ports';
 import { createHttpSyncTransport } from '../services/sync/http-transport';
@@ -59,6 +61,7 @@ export interface Repositories {
   syncState: SyncStateRepository;
   /** The upload queue. Reads and writes `sync_records` only. */
   syncQueue: SyncQueueRepository;
+  syncDownloads: SyncDownloadRepository;
   /** This installation's stable device id. */
   deviceIdentity: DeviceIdentityRepository;
   /**
@@ -95,6 +98,7 @@ export async function getRepositories(): Promise<Repositories> {
       dashboard: createDashboardRepository(db),
       syncState: createSyncStateRepository(db),
       syncQueue: createSyncRepository(db),
+      syncDownloads: createSyncDownloadRepository(db, newId),
       deviceIdentity: createSettingsRepository(db, newId),
       syncTransport: isSyncConfigured() ? createHttpSyncTransport({ authHeaders: async () => {
         const token = getSyncToken();

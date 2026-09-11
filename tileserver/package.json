@@ -1,0 +1,25 @@
+{
+  "name": "hospital-equipment-intelligence-tileserver",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Self-hosted MapLibre style, vector tiles, glyphs and sprites for the app's basemap (docs/maps.md §4). Built from OpenFreeMap's OpenMapTiles pipeline — not a general tile provider.",
+  "main": "dist/tileserver/src/main.js",
+  "scripts": {
+    "build": "tsc -p .",
+    "typecheck": "tsc -p . --noEmit",
+    "start": "node dist/tileserver/src/main.js",
+    "build-tiles": "node --experimental-strip-types scripts/build-tiles.ts",
+    "test": "node --test --experimental-strip-types"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^22.10.0",
+    "typescript": "~5.9.2"
+  },
+  "engines": {
+    "node": ">=22.6"
+  }
+}

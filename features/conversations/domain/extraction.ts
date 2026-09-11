@@ -27,8 +27,8 @@ export interface ExtractedValue {
 
 export interface AgentExtraction {
   values: ExtractedValue[];
-  /** Free text the model produced for the user, in the user's language. */
-  followUpQuestion: string | null;
+  /** Vision assessment, never a persisted equipment attribute. Missing is inconclusive. */
+  nameplate?: 'detected' | 'not_detected' | 'uncertain';
 }
 
 /**
@@ -50,7 +50,6 @@ export type ExtractionIssue = AgentIssue<
   | 'invalid_value_type'
   | 'invalid_status'
   | 'invalid_confidence'
-  | 'invalid_follow_up'
 >;
 
 export type ExtractionParseResult =
@@ -159,17 +158,10 @@ export function parseExtraction(raw: unknown): ExtractionParseResult {
     });
   });
 
-  const followUpRaw = raw.followUpQuestion;
-  let followUpQuestion: string | null = null;
-  if (followUpRaw === null || followUpRaw === undefined) {
-    followUpQuestion = null;
-  } else if (typeof followUpRaw === 'string') {
-    followUpQuestion = followUpRaw.trim() === '' ? null : followUpRaw;
-  } else {
-    rejected.push({ path: '$.followUpQuestion', code: 'invalid_follow_up' });
-  }
-
-  return { ok: true, extraction: { values, followUpQuestion }, rejected };
+  const nameplate = raw.nameplate;
+  return { ok: true, extraction: { values,
+    ...(nameplate === 'detected' || nameplate === 'not_detected' || nameplate === 'uncertain' ? { nameplate } : {}),
+  }, rejected };
 }
 
 /**
@@ -191,7 +183,21 @@ export function normalizeExtraction(
   };
 }
 
-/** The JSON shape the model is instructed to produce (docs/ai-agent.md §7). */
+/**
+ * The JSON shape the model is instructed to produce (docs/ai-agent.md §7).
+ *
+ * There used to be a `reasoning` string ahead of `values`, forcing the
+ * grammar to give the model a free-text scratchpad before it committed to
+ * categorical fields (schema-ordering chain-of-thought under
+ * grammar-constrained decoding). Removed (2026-09-10): it measurably slowed
+ * every turn and produced unparseable output often enough to matter, and it
+ * cannot be replaced by MedPsy's native `<think>` channel either — that
+ * channel has to emit before generation starts, but `responseFormat:
+ * json_schema` (`services/ai/qvac-runtime.ts`) compiles this schema to a GBNF
+ * grammar that constrains sampling from the very first token, so there is no
+ * point in the request where free-form reasoning tokens are legal. Extraction
+ * is a single grammar-constrained pass with no reasoning step.
+ */
 export const EXTRACTION_JSON_SCHEMA = {
   type: 'object',
   properties: {
@@ -208,7 +214,24 @@ export const EXTRACTION_JSON_SCHEMA = {
         required: ['field', 'value', 'status', 'confidence'],
       },
     },
-    followUpQuestion: { type: ['string', 'null'] },
   },
   required: ['values'],
+} as const;
+
+/**
+ * The vision variant: the same shape plus the nameplate assessment (§3a).
+ *
+ * Shared by the prompt text and the decoding grammar so the model is asked
+ * for, and constrained to, exactly one shape.
+ */
+export const VISION_EXTRACTION_JSON_SCHEMA = {
+  ...EXTRACTION_JSON_SCHEMA,
+  properties: {
+    ...EXTRACTION_JSON_SCHEMA.properties,
+    nameplate: {
+      type: 'string',
+      enum: ['detected', 'not_detected', 'uncertain'],
+    },
+  },
+  required: [...EXTRACTION_JSON_SCHEMA.required, 'nameplate'],
 } as const;

@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 
+import {
+  getDashboardScopeSite,
+  setDashboardScopeSite,
+  subscribeDashboardScope,
+  type DashboardScopeSite,
+} from '../../../lib/dashboard-scope';
 import { getRepositories } from '../../../lib/container';
 import {
   loadDashboard,
@@ -16,15 +22,24 @@ export type DashboardPhase = 'loading' | 'ready' | 'unavailable';
  * (loading, ready, empty, error) the screen is in, and exposes a reload —
  * the metrics are a snapshot of local rows, so returning to the tab after
  * capturing something must be able to recompute them.
+ *
+ * Also tracks the map's "customer summary" site selection
+ * (`lib/dashboard-scope.ts`) — re-read on every load and whenever the map
+ * changes it, since expo-router's tab navigator keeps this screen mounted
+ * across tab switches.
  */
 export function useDashboard(now: () => Date = () => new Date()) {
   const [phase, setPhase] = useState<DashboardPhase>('loading');
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<DashboardData | null>(null);
+  const [scopeSite, setScopeSite] = useState<DashboardScopeSite | null>(
+    getDashboardScopeSite
+  );
 
   const load = useCallback(async () => {
     // Keep current data mounted while refreshing (including the last sync report).
     setError(null);
+    setScopeSite(getDashboardScopeSite());
     try {
       const repositories = await getRepositories();
       const outcome = await loadDashboard({
@@ -56,5 +71,11 @@ export function useDashboard(now: () => Date = () => new Date()) {
     void load();
   }, [load]);
 
-  return { phase, error, data, reload: load };
+  useEffect(() => subscribeDashboardScope(() => void load()), [load]);
+
+  const clearScope = useCallback(() => {
+    setDashboardScopeSite(null);
+  }, []);
+
+  return { phase, error, data, reload: load, scopeSite, clearScope };
 }

@@ -22,7 +22,8 @@
         "expo-build-properties",
         {
           "android": {
-            "minSdkVersion": 29
+            "minSdkVersion": 29,
+            "useLegacyPackaging": true
           }
         }
       ],
@@ -40,6 +41,25 @@
         {
           "photosPermission": "La aplicación usa tus fotos para leer la placa del equipo en el dispositivo, sin enviarlas a ningún servidor.",
           "cameraPermission": "La aplicación usa la cámara para fotografiar la placa del equipo. El análisis ocurre en el dispositivo."
+        }
+      ],
+      [
+        "react-native-audio-api",
+        {
+          "iosBackgroundMode": false,
+          "iosMicrophonePermission": "Permite transcribir tu voz en este dispositivo.",
+          "androidPermissions": [
+            "android.permission.RECORD_AUDIO",
+            "android.permission.MODIFY_AUDIO_SETTINGS"
+          ],
+          "androidForegroundService": false
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "La aplicación usa la cámara para fotografiar la placa del equipo. El análisis ocurre en el dispositivo.",
+          "recordAudioAndroid": false
         }
       ]
     ]

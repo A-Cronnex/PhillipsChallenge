@@ -1,303 +1,290 @@
-import { Button } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Image, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useIsFocused } from '@react-navigation/native';
+import { MaterialIcons } from '@expo/vector-icons';
+import { AppButton } from '../../../components/ui/AppButton';
+import { ProgressBar } from '../../../components/ui/ProgressBar';
+import { formatBytes } from '../../../lib/format';
+import { colors, MIN_TOUCH_TARGET, radii, spacing, typography } from '../../../lib/theme';
+import type { AiRuntime, AgentActivity } from '../application/ports';
+import { missingRequiredFields } from '../domain/conversation';
+import { labelOf } from '../domain/fields';
+import { AIVoiceOrb, AGENT_STATE_LABELS } from './AIVoiceOrb';
 import { ConversationReview } from './ConversationReview';
-import { VoiceRecorder } from './VoiceRecorder';
-import { retainArtifact } from '../../../services/capture/artifacts';
-import * as ImagePicker from 'expo-image-picker';
-import { useState } from 'react';
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
-
-import { ErrorState } from '../../../components/ui/ScreenStates';
-import { colors, MIN_TOUCH_TARGET, spacing, typography } from '../../../lib/theme';
-import { MODEL_LABELS } from '../../../services/ai/models';
-import { CAPTURE_FIELD_SPECS, REQUIRED_FIELDS } from '../domain/fields';
-import { isKnown } from '../domain/conversation';
+import { NameplateReview } from './NameplateReview';
+import { NameplateCamera } from './NameplateCamera';
 import { useConversation } from './useConversation';
-import type { AiRuntime } from '../application/ports';
+import { useNameplateCapture } from './useNameplateCapture';
+import { useVoiceCapture } from './useVoiceCapture';
 
-interface ConversationScreenProps {
-  runtime: AiRuntime;
-  userId: string;
-}
-
-/**
- * Capture conversation with the local agent (docs/ai-agent.md §3, §3a).
- *
- * Everything runs on the device. No input — text, photo or audio — leaves the
- * phone, and the screen never contacts the network.
- */
-export function ConversationScreen({ runtime, userId }: ConversationScreenProps) {
+export function ConversationScreen({ runtime, userId, photoFirst = false, onManualCapture }: {
+  runtime: AiRuntime; userId: string; photoFirst?: boolean; onManualCapture?: () => void;
+}) {
   const chat = useConversation({ runtime, userId });
   const [draft, setDraft] = useState('');
   const [reviewing, setReviewing] = useState(false);
-  const [recording, setRecording] = useState(false);
-  const [mediaError, setMediaError] = useState('');
-  if (reviewing) return <ConversationReview conversation={chat.conversation}
-    onSaved={() => { chat.markSaved(); setReviewing(false); }} onCancel={() => setReviewing(false)} />;
-  if (chat.conversation.status === 'saved') return <View style={styles.centered}>
-    <Text style={styles.title}>Observación guardada en este dispositivo</Text>
-    <Text>Pendiente de sincronización. Puedes consultarla en el tablero y el mapa.</Text>
-    <Button title="Nueva conversación" disabled={chat.busy || recording} onPress={() => void chat.newConversation()} />
-  </View>;
-
-  if (chat.runtimePhase === 'idle') {
-    return (
-      <View style={styles.centered}>
-        <Text style={styles.title}>Agente de captura</Text>
-        <Text style={styles.body}>
-          Los modelos se ejecutan en este dispositivo: {MODEL_LABELS.text} para
-          el texto y {MODEL_LABELS.vision} para las fotos. La primera carga
-          requiere conexión para descargar los modelos y espacio libre. Después de descargarlos podrás usarlos sin conexión.
-        </Text>
-        {chat.error ? <Text accessibilityRole="alert">{chat.error}</Text> : null}
-        {chat.conversation.turns.length ? <Button title="Revisar conversación recuperada" disabled={chat.busy || recording} onPress={() => setReviewing(true)} /> : null}
-        <Pressable
-          onPress={() => void chat.prepare()}
-          style={styles.primaryButton}
-          accessibilityRole="button"
-          accessibilityLabel="Cargar los modelos"
-          testID="prepare-button"
-        >
-          <Text style={styles.primaryButtonText}>Cargar modelos</Text>
-        </Pressable>
-      </View>
-    );
-  }
-
-  if (chat.runtimePhase === 'preparing') {
-    return (
-      <View style={styles.centered} accessibilityLiveRegion="polite">
-        <ActivityIndicator size="large" color={colors.primary} />
-        <Text style={styles.body} testID="preparing">
-          Cargando los modelos en el dispositivo…
-        </Text>
-      </View>
-    );
-  }
-
-  if (chat.runtimePhase === 'unavailable') {
-    return (
-      <View style={{ flex: 1 }}><ErrorState
-        title="No se pudieron cargar los modelos"
-        message={
-          chat.runtimeError ??
-          'La inferencia local no está disponible en este dispositivo.'
-        }
-        onRetry={() => void chat.prepare()}
-      />
-      {chat.conversation.turns.length ? <Button title="Revisar sin inferencia" disabled={chat.busy} onPress={() => setReviewing(true)} /> : null}
-      </View>
-    );
-  }
-
-  async function takePhoto() {
-    setMediaError('');
-    try {
-      const permission = await ImagePicker.requestCameraPermissionsAsync();
-      if (!permission.granted) { setMediaError('Permite la cámara en Ajustes para tomar una foto.'); return; }
-      const result = await ImagePicker.launchCameraAsync({ quality: 0.7 });
-      if (!result.canceled && result.assets[0]?.uri) {
-        await chat.sendPhoto(retainArtifact(result.assets[0].uri, 'image'));
-      }
-    } catch { setMediaError('No se pudo conservar la foto. Inténtalo de nuevo.'); }
-  }
-
-  function send() {
+  const [photoOptions, setPhotoOptions] = useState(false);
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
+  const history = useRef<ScrollView>(null);
+  const nearBottom = useRef(true);
+  const focused = useIsFocused();
+  const dimensions = useWindowDimensions();
+  const voice = useVoiceCapture(runtime, async (text, audioPath) => {
+    setDraft(text);
+    const sent = await chat.sendVoiceTranscript(text, audioPath);
+    if (sent) setDraft('');
+  }, chat.retainVoiceInput);
+  const vision = useNameplateCapture(runtime, chat.conversation, chat.acceptPhoto, chat.retainPhotoInput);
+  const ready = chat.runtimePhase === 'ready';
+  const saved = chat.conversation.status === 'saved';
+  const voiceActive = voice.state.phase === 'starting' || voice.state.phase === 'listening' || voice.state.phase === 'finishing';
+  const visionActive = vision.state.phase !== 'idle';
+  // Camera capture does not require MedPsy. Vision loads through its own port
+  // after the local image exists, including on a fresh/offline installation.
+  const cameraDisabled = chat.busy || voiceActive || visionActive || saved;
+  const disabled = chat.busy || voiceActive || visionActive || saved || !ready;
+  const partial = 'partial' in voice.state ? voice.state.partial : '';
+  const activity: AgentActivity = voice.state.phase === 'listening' ? 'listening'
+    : chat.activity !== 'idle' ? chat.activity
+    : voiceActive || vision.state.phase === 'processing' || chat.runtimePhase === 'preparing' ? 'thinking' : 'idle';
+  const compact = keyboardOpen || dimensions.height < 760 || dimensions.fontScale > 1.3;
+  const status = chat.runtimePhase === 'preparing' ? 'Preparando el agente'
+    : voice.state.phase === 'starting' ? voice.state.step === 'model' ? 'Preparando voz' : 'Activando el micrófono'
+    : voice.state.phase === 'listening' ? 'Grabando · pulsa ■ para enviar'
+    : voice.state.phase === 'finishing' && chat.activity === 'idle' ? 'Terminando la transcripción'
+    : !ready ? 'Tu asistente de campo' : saved ? 'Observación guardada' : AGENT_STATE_LABELS[activity];
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardDidShow', () => setKeyboardOpen(true));
+    const hide = Keyboard.addListener('keyboardDidHide', () => setKeyboardOpen(false));
+    return () => { show.remove(); hide.remove(); };
+  }, []);
+  useEffect(() => { if (!focused) { voice.cancel(); chat.finishDelivery(); } }, [focused]);
+  useEffect(() => {
+    if (voice.state.phase === 'listening') {
+      nearBottom.current = false;
+      history.current?.scrollTo({ y: 0, animated: false });
+    }
+  }, [voice.state.phase]);
+  useEffect(() => {
+    if (chat.delivery) { nearBottom.current = true; history.current?.scrollToEnd({ animated: false }); }
+  }, [chat.delivery?.turnIndex]);
+  const photoOpened = useRef(false);
+  useEffect(() => {
+    if (photoFirst && ready && !chat.busy && !photoOpened.current) { photoOpened.current = true; setPhotoOptions(true); }
+  }, [photoFirst, ready, chat.busy]);
+  async function send() {
+    if (!draft.trim() || disabled) return;
     const text = draft.trim();
-    if (!text) return;
-    void chat.sendText(text).then(ok => { if (ok) setDraft(''); });
+    Keyboard.dismiss();
+    if (await chat.sendText(text)) setDraft('');
   }
-
-  return (
-    <View style={styles.screen}>
-      <ScrollView style={styles.transcript} contentContainerStyle={styles.transcriptContent}>
-        {chat.conversation.turns.length === 0 ? (
-          <Text style={styles.body} testID="conversation-empty">
-            Describe el equipo que estás viendo, o toma una foto de la placa.
-          </Text>
-        ) : (
-          chat.conversation.turns.map((turn, index) => (
-            <View
-              key={`${turn.at}-${index}`}
-              style={[styles.turn, turn.role === 'agent' ? styles.agentTurn : styles.userTurn]}
-            >
-              <Text style={styles.turnRole}>
-                {turn.role === 'agent' ? 'Agente' : 'Tú'}
-                {turn.source !== 'text' ? ` · ${turn.source}` : ''}
-              </Text>
-              <Text style={styles.turnText}>{turn.text}</Text>
-            </View>
-          ))
-        )}
-
-        {chat.error ? (
-          <View style={styles.errorBanner} accessibilityLiveRegion="polite" testID="turn-error">
-            <Text style={styles.errorTitle}>No se pudo procesar</Text>
-            <Text style={styles.turnText}>{chat.error}</Text>
-            <Text style={styles.turnText}>Tu entrada se conservó.</Text>
-            <Button title="Reintentar última entrada" disabled={chat.busy || recording} onPress={() => void chat.retryLast()} />
+  /**
+   * Confirms, then reports exactly why a delete was refused.
+   *
+   * The reasons are not interchangeable: one means the capture became a
+   * historical observation, the other that the server already holds it and a
+   * local delete would be undone by the next download (`ports.ts`).
+   */
+  function confirmDelete() {
+    Alert.alert(
+      'Eliminar conversación',
+      'Se descartará esta conversación y su borrador en este dispositivo. No se borra ninguna observación ya guardada.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Eliminar', style: 'destructive', onPress: () => void (async () => {
+            const result = await chat.deleteConversation();
+            if (result.status === 'deleted') return;
+            Alert.alert('No se eliminó', {
+              has_observation: 'Esta conversación ya produjo una observación guardada. Borrarla dejaría esa observación sin su origen, así que se conserva.',
+              sync_in_flight: 'Hay una operación en curso sobre esta conversación. Inténtalo de nuevo en un momento.',
+            }[result.reason]);
+          })(),
+        },
+      ]
+    );
+  }
+  const reviewProposal = 'proposal' in vision.state ? vision.state.proposal : undefined;
+  const reviewError = vision.state.phase === 'error' ? vision.state.message : undefined;
+  return <SafeAreaView style={styles.screen} edges={['top', 'left', 'right']}>
+    {focused && vision.state.phase === 'capturing' && vision.state.source === 'camera'
+      ? <NameplateCamera onCaptured={vision.captured} onCancel={() => void vision.cancel()} onLibrary={() => void vision.capture('library')} /> : null}
+    <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+      {reviewing ? <ConversationReview conversation={chat.conversation} onCancel={() => setReviewing(false)} onSaved={() => { chat.markSaved(); setReviewing(false); }} />
+        : reviewProposal ? <NameplateReview key={reviewProposal.imagePath} proposal={reviewProposal} busy={vision.state.phase === 'submitting'} error={reviewError}
+          onAccept={edits => void vision.accept(edits)} onCancel={vision.cancel} />
+        : <View style={styles.column}>
+          <View style={styles.header}>
+            <View style={styles.headerText}><Text style={styles.eyebrow}>ASISTENTE DE CAMPO</Text><Text style={styles.title}>Una conversación, un registro</Text></View>
+            {onManualCapture ? <Pressable accessibilityRole="button" accessibilityLabel="Abrir la captura manual" disabled={chat.busy || voiceActive || visionActive}
+              onPress={onManualCapture} style={styles.iconButton}><MaterialIcons name="edit-note" size={26} color={colors.onSurfaceVariant} /></Pressable> : null}
           </View>
-        ) : null}
-      </ScrollView>
-
-      <View style={styles.progress} testID="field-progress">
-        <Text style={styles.progressTitle}>Campos requeridos</Text>
-        <View style={styles.chips}>
-          {REQUIRED_FIELDS.map((field) => {
-            const known = isKnown(chat.conversation.fields[field]);
-            return (
-              <View
-                key={field}
-                style={[styles.chip, known && styles.chipDone]}
-                accessibilityLabel={`${CAPTURE_FIELD_SPECS[field].label}: ${
-                  known ? 'capturado' : 'pendiente'
-                }`}
-              >
-                <Text style={[styles.chipText, known && styles.chipTextDone]}>
-                  {known ? '✓ ' : ''}
-                  {CAPTURE_FIELD_SPECS[field].label}
-                </Text>
-              </View>
-            );
-          })}
-        </View>
-      </View>
-
-      {mediaError ? <Text accessibilityRole="alert">{mediaError}</Text> : null}
-      {chat.warning ? <Text accessibilityLiveRegion="polite">{chat.warning}</Text> : null}
-      <Button title="Revisar y guardar" disabled={chat.busy || recording || !chat.conversation.turns.length} onPress={() => setReviewing(true)} />
-      <VoiceRecorder disabled={chat.busy} onRecorded={chat.sendVoice} onRecordingChange={setRecording} />
-      <View style={styles.composer}>
-        <TextInput
-          style={styles.input}
-          value={draft}
-          onChangeText={setDraft}
-          placeholder="Escribe tu respuesta…"
-          placeholderTextColor={colors.outline}
-          editable={!chat.busy && !recording}
-          accessibilityLabel="Mensaje para el agente"
-          testID="composer-input"
-        />
-        {chat.cameraOffered ? (
-          <Pressable
-            onPress={() => void takePhoto()}
-            disabled={chat.busy || recording}
-            style={styles.iconButton}
-            accessibilityRole="button"
-            accessibilityLabel="Tomar una foto"
-            testID="camera-button"
-          >
-            <Text style={styles.iconButtonText}>📷</Text>
-          </Pressable>
-        ) : null}
-        <Pressable
-          onPress={send}
-          disabled={chat.busy || recording || draft.trim().length === 0}
-          style={[
-            styles.iconButton,
-            (chat.busy || draft.trim().length === 0) && styles.iconButtonDisabled,
-          ]}
-          accessibilityRole="button"
-          accessibilityLabel="Enviar"
-          accessibilityState={{ busy: chat.busy }}
-          testID="send-button"
-        >
-          <Text style={styles.iconButtonText}>{chat.busy ? '…' : '➤'}</Text>
-        </Pressable>
-      </View>
-    </View>
-  );
+          <ScrollView ref={history} style={styles.history} contentContainerStyle={styles.historyContent} keyboardShouldPersistTaps="handled"
+            onScroll={event => { const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent; nearBottom.current = contentSize.height - contentOffset.y - layoutMeasurement.height < 100; }} scrollEventThrottle={100}
+            onContentSizeChange={() => { if (nearBottom.current && (!voiceActive || chat.delivery) && chat.conversation.turns.length) history.current?.scrollToEnd({ animated: false }); }}>
+            <View style={styles.hero}>
+              <AIVoiceOrb state={activity} compact={compact} active={focused} />
+              <Text style={styles.status} accessibilityLiveRegion="polite">{status}</Text>
+              {voice.state.phase === 'listening' || voice.state.phase === 'finishing'
+                ? <Text style={styles.partial} testID="partial-transcript" accessibilityLiveRegion="polite">{partial || 'Habla con naturalidad. El texto aparecerá aquí.'}</Text>
+                : <Text style={styles.subtitle}>{ready ? 'Cuéntame qué equipo tienes delante.' : 'Habla, escribe o fotografía la placa del equipo.'}</Text>}
+              <View style={styles.localBadge}><MaterialIcons name="phonelink-lock" size={14} color={colors.onSurfaceVariant} /><Text style={styles.localText}>Análisis local · Fotos y audio privados</Text></View>
+              <Pressable onPress={() => setPhotoOptions(value => !value)} disabled={cameraDisabled}
+                accessibilityRole="button" accessibilityLabel="Capturar placa con cámara" accessibilityState={{ disabled: cameraDisabled, expanded: photoOptions }}
+                style={[styles.camera, cameraDisabled && styles.disabled]}>
+                <MaterialIcons name="photo-camera" size={23} color={colors.primary} /><Text style={styles.cameraLabel}>Capturar placa con cámara</Text>
+                <MaterialIcons name="chevron-right" size={20} color={colors.onSurfaceVariant} />
+              </Pressable>
+              {photoOptions && !cameraDisabled ? <View style={styles.actions}>
+                <AppButton title="Tomar fotografía" onPress={() => { setPhotoOptions(false); void vision.capture('camera'); }} />
+                <AppButton title="Elegir de mis fotos" onPress={() => { setPhotoOptions(false); void vision.capture('library'); }} />
+              </View> : null}
+            </View>
+            {!ready ? <View style={styles.card}>
+              <Text style={styles.cardTitle}>Inteligencia en tu dispositivo</Text>
+              <Text style={styles.body}>Prepara los modelos con conexión antes de salir a campo. Una vez descargados, puedes capturar sin internet.</Text>
+              {/*
+                Models are fetched once and reused offline, so what this device
+                is still missing is stated before the user leaves for the field
+                (product requirement, 2026-09-10).
+              */}
+              {chat.readiness ? <Text style={styles.body} testID="model-readiness" accessibilityLiveRegion="polite">
+                {/*
+                  "archivos", not "modelos": the four models of
+                  docs/tech-stack.md §6 ship as more files than that — vision
+                  needs its projector, Whisper its VAD — and calling those
+                  extra files "modelos" made the count look wrong to the user.
+                */}
+                {chat.readiness.allCached
+                  ? 'Los modelos ya están descargados en este dispositivo. No se necesita conexión.'
+                  : `Faltan ${chat.readiness.missing.length} de ${chat.readiness.assets.length} archivos de modelo (${formatBytes(chat.readiness.missingBytes)}). Se descargan una sola vez.`}
+              </Text> : null}
+              {chat.runtimeError ? <Text style={styles.error} accessibilityRole="alert">{chat.runtimeError}</Text> : null}
+              {chat.runtimePhase === 'preparing'
+                ? chat.progress && chat.progress.totalBytes > 0
+                  ? <ProgressBar testID="model-download-progress" fraction={chat.progress.fraction}
+                      label={chat.progress.current
+                        ? `Descargando ${chat.progress.current} · ${formatBytes(chat.progress.downloadedBytes)} de ${formatBytes(chat.progress.totalBytes)}`
+                        : 'Cargando modelos en memoria…'} />
+                  : <ActivityIndicator color={colors.primary} accessibilityLabel="Cargando modelos" />
+                : <AppButton title={chat.runtimePhase === 'unavailable' ? 'Reintentar carga de modelos'
+                    : chat.readiness && !chat.readiness.allCached ? 'Descargar y preparar agente' : 'Preparar agente'}
+                    disabled={chat.busy || voiceActive || visionActive} onPress={() => void chat.prepare()} />}
+              {onManualCapture ? <Pressable accessibilityRole="button" onPress={onManualCapture} style={styles.textButton}><Text style={styles.link}>Continuar con captura manual</Text></Pressable> : null}
+            </View> : null}
+            {vision.state.phase === 'capturing' || vision.state.phase === 'processing' ? <View style={styles.card}>
+              {'imagePath' in vision.state ? <Image source={{ uri: vision.state.imagePath }} style={styles.preview} resizeMode="contain" accessibilityLabel="Fotografía seleccionada" /> : null}
+              <ActivityIndicator color={colors.primary} />
+              <Text style={styles.body} accessibilityLiveRegion="polite">{vision.state.phase === 'capturing' ? 'Abriendo captura de imagen…' : 'Comprobando la placa y leyendo sus datos en el dispositivo…'}</Text>
+              <AppButton title="Cancelar y volver al chat" onPress={vision.cancel} />
+            </View> : null}
+            {vision.state.phase === 'error' ? <View style={styles.card}>
+              <Text style={styles.error} accessibilityRole="alert">{vision.state.message}</Text>
+              {vision.state.imagePath ? <AppButton title="Reintentar análisis" onPress={() => void vision.retry()} /> : null}
+              <AppButton title="Elegir otra foto" onPress={() => void vision.capture('library')} />
+              <AppButton title="Volver al chat" onPress={vision.cancel} />
+            </View> : null}
+            <View style={styles.divider}><Text style={styles.eyebrow}>CONVERSACIÓN</Text><View style={styles.line} /></View>
+            {!chat.conversation.turns.length ? <View style={styles.agentBubble}>
+              <Text style={styles.turnLabel}>ASISTENTE</Text><Text style={styles.message}>Comencemos con el equipo y el lugar de la visita. Por ejemplo: «Hay dos monitores en la clínica».</Text>
+            </View> : null}
+            {chat.conversation.turns.map((turn, index) => <View key={`${index}-${turn.at}`} style={[styles.bubble, turn.role === 'user' ? styles.userBubble : styles.agentBubble]}>
+              <Text style={styles.turnLabel}>{turn.role === 'user' ? 'TÚ' : 'ASISTENTE'}{turn.source === 'voice' ? ' · VOZ' : turn.source === 'image' ? ' · PLACA' : ''}</Text>
+              {turn.source === 'image' && turn.reference ? <Image source={{ uri: turn.reference }} style={styles.turnImage} accessibilityLabel="Placa revisada y enviada" /> : null}
+              {turn.role === 'agent' && turn.capturedSummary ? <Text style={styles.capturedSummary}>{turn.capturedSummary}</Text> : null}
+              <Text style={styles.message} selectable accessibilityLabel={turn.text}
+                accessibilityLiveRegion={turn.role === 'agent' && chat.delivery?.turnIndex !== index ? 'polite' : 'none'}
+                testID={turn.role === 'agent' ? `agent-message-${index}` : undefined}>
+                {chat.delivery?.turnIndex === index ? chat.delivery.text || '…' : turn.text}
+              </Text>
+            </View>)}
+            {chat.error ? <View style={styles.card}><Text style={styles.error} accessibilityRole="alert">{chat.error}</Text>
+              <AppButton title="Reintentar último mensaje" disabled={disabled} onPress={() => void chat.retryLast()} /></View> : null}
+            {chat.warning ? <Text style={styles.warning} accessibilityLiveRegion="polite">{chat.warning}</Text> : null}
+            {voice.state.phase === 'error' ? <View style={styles.card}><Text style={styles.error} accessibilityRole="alert">{voice.state.message}</Text>
+              {voice.state.audioPath ? <AppButton title="Reintentar transcripción del audio" disabled={disabled} onPress={() => { if (voice.state.phase === 'error' && voice.state.audioPath) void chat.sendVoice(voice.state.audioPath); }} /> : null}</View> : null}
+            {saved ? <View style={styles.card}><Text style={styles.cardTitle}>Guardada en este dispositivo</Text><Text style={styles.body}>Pendiente de sincronización. Puedes continuar trabajando sin conexión.</Text>
+              <AppButton title="Nueva conversación" disabled={chat.busy} onPress={() => void chat.newConversation()} /></View>
+              : chat.conversation.turns.length > 0 ? <View style={styles.card}>
+                <Text style={styles.body}>{missingRequiredFields(chat.conversation).length ? `Por completar: ${missingRequiredFields(chat.conversation).map(labelOf).join(', ')}.` : 'La información está lista para tu revisión final.'}</Text>
+                <AppButton title="Revisar y guardar observación" disabled={chat.busy || voiceActive || visionActive} onPress={() => setReviewing(true)} />
+                {/*
+                  Destructive, so it is a plain text button rather than a
+                  filled one, and it always confirms first. Only offered once
+                  there is something to discard.
+                */}
+                <Pressable accessibilityRole="button" accessibilityLabel="Eliminar esta conversación"
+                  disabled={chat.busy || voiceActive || visionActive} onPress={confirmDelete}
+                  style={styles.textButton} testID="delete-conversation">
+                  <Text style={[styles.link, styles.destructive]}>Eliminar conversación</Text>
+                </Pressable>
+              </View> : null}
+          </ScrollView>
+          <View style={styles.composerArea}>
+            {voiceActive && chat.activity === 'idle' ? <Pressable accessibilityRole="button" accessibilityLabel={voice.state.phase === 'starting' ? 'Cancelar preparación de voz' : 'Cancelar grabación'} onPress={voice.cancel} style={styles.textButton}><Text style={styles.link}>{voice.state.phase === 'starting' ? 'Cancelar preparación de voz' : 'Cancelar grabación'}</Text></Pressable> : null}
+            <View style={styles.composer}>
+              <TextInput value={draft} onChangeText={setDraft} placeholder="Escribe un mensaje…" placeholderTextColor={colors.onSurfaceVariant}
+                accessibilityLabel="Mensaje para el agente" multiline editable={!disabled} style={styles.input} maxLength={4000} />
+              <Pressable onPress={() => void (voice.state.phase === 'listening' ? voice.stop() : voice.start())}
+                disabled={voice.state.phase !== 'listening' && disabled} style={[styles.mic, voice.state.phase === 'listening' && styles.recording]}
+                accessibilityRole="button" accessibilityLabel={voice.state.phase === 'listening' ? 'Terminar grabación y enviar' : 'Hablar con el agente'}
+                accessibilityState={{ disabled: voice.state.phase !== 'listening' && disabled }}>
+                {voice.state.phase === 'starting' || voice.state.phase === 'finishing' ? <ActivityIndicator color={colors.onPrimary} /> : <MaterialIcons name={voice.state.phase === 'listening' ? 'stop' : 'mic'} size={24} color={colors.onPrimary} />}
+              </Pressable>
+              {draft.trim() ? <Pressable accessibilityRole="button" accessibilityLabel="Enviar mensaje" disabled={disabled} onPress={() => void send()} style={styles.iconButton}>
+                <MaterialIcons name="arrow-upward" size={24} color={disabled ? colors.disabled : colors.primary} />
+              </Pressable> : null}
+            </View>
+          </View>
+        </View>}
+    </KeyboardAvoidingView>
+  </SafeAreaView>;
 }
-
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
-  centered: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: spacing.xl,
-    gap: spacing.md,
-  },
-  title: { ...typography.titleLarge, color: colors.onSurface, textAlign: 'center' },
-  body: {
-    ...typography.bodyMedium,
-    color: colors.onSurfaceVariant,
-    textAlign: 'center',
-  },
-  primaryButton: {
-    minHeight: MIN_TOUCH_TARGET,
-    justifyContent: 'center',
-    paddingHorizontal: spacing.lg,
-    borderRadius: 4,
-    backgroundColor: colors.primary,
-  },
-  primaryButtonText: { ...typography.titleMedium, color: colors.onPrimary },
-  transcript: { flex: 1 },
-  transcriptContent: { padding: spacing.md, gap: spacing.sm },
-  turn: { padding: spacing.sm, borderRadius: 8, maxWidth: '90%' },
-  agentTurn: { backgroundColor: colors.surfaceVariant, alignSelf: 'flex-start' },
-  userTurn: { backgroundColor: colors.pendingContainer, alignSelf: 'flex-end' },
-  turnRole: { ...typography.labelMedium, color: colors.onSurfaceVariant },
-  turnText: { ...typography.bodyMedium, color: colors.onSurface, marginTop: 2 },
-  errorBanner: {
-    padding: spacing.sm,
-    borderRadius: 4,
-    backgroundColor: colors.errorContainer,
-    gap: spacing.xs,
-  },
-  errorTitle: { ...typography.labelMedium, color: colors.error },
-  progress: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderTopWidth: 1,
-    borderTopColor: colors.surfaceVariant,
-  },
-  progressTitle: { ...typography.labelMedium, color: colors.onSurfaceVariant },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginTop: spacing.xs },
-  chip: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: colors.outline,
-  },
-  chipDone: { backgroundColor: colors.successContainer, borderColor: colors.success },
-  chipText: { ...typography.labelMedium, color: colors.onSurfaceVariant },
-  chipTextDone: { color: colors.success },
-  composer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    padding: spacing.md,
-    borderTopWidth: 1,
-    borderTopColor: colors.surfaceVariant,
-    backgroundColor: colors.surface,
-  },
-  input: {
-    flex: 1,
-    minHeight: MIN_TOUCH_TARGET,
-    borderWidth: 1,
-    borderColor: colors.outline,
-    borderRadius: 4,
-    paddingHorizontal: spacing.md,
-    color: colors.onSurface,
-    ...typography.bodyLarge,
-  },
-  iconButton: {
-    minWidth: MIN_TOUCH_TARGET,
-    minHeight: MIN_TOUCH_TARGET,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 4,
-    backgroundColor: colors.primary,
-  },
-  iconButtonDisabled: { backgroundColor: colors.disabled },
-  iconButtonText: { fontSize: 20, color: colors.onPrimary },
+  column: { flex: 1, width: '100%', maxWidth: 800, alignSelf: 'center' },
+  header: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm },
+  headerText: { flex: 1, gap: spacing.xs },
+  eyebrow: { ...typography.labelMedium, color: colors.onSurfaceVariant, letterSpacing: 1.4 },
+  title: { ...typography.titleMedium, color: colors.onSurface },
+  history: { flex: 1 },
+  historyContent: { paddingHorizontal: spacing.lg, paddingBottom: spacing.lg, gap: spacing.md },
+  hero: { alignItems: 'center', gap: spacing.sm, paddingTop: spacing.sm },
+  status: { ...typography.titleLarge, color: colors.onSurface, textAlign: 'center' },
+  subtitle: { ...typography.bodyMedium, color: colors.onSurfaceVariant, textAlign: 'center', lineHeight: 21 },
+  partial: { ...typography.bodyLarge, fontWeight: '400', color: colors.onSurfaceVariant, textAlign: 'center', lineHeight: 24, paddingHorizontal: spacing.sm },
+  localBadge: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, paddingVertical: spacing.xs },
+  localText: { ...typography.bodyMedium, fontSize: 12, color: colors.onSurfaceVariant, flexShrink: 1 },
+  camera: { minHeight: 56, alignSelf: 'stretch', flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    padding: spacing.md, borderRadius: radii.md, backgroundColor: colors.glass, borderWidth: 1, borderColor: colors.border, marginTop: spacing.sm },
+  cameraLabel: { ...typography.titleMedium, color: colors.onSurface, flex: 1 },
+  disabled: { opacity: 0.45 },
+  actions: { gap: spacing.sm, alignSelf: 'stretch' },
+  card: { borderRadius: radii.md, backgroundColor: colors.glass, padding: spacing.md, gap: spacing.sm, borderWidth: 1, borderColor: colors.border },
+  cardTitle: { ...typography.titleMedium, color: colors.onSurface },
+  body: { ...typography.bodyMedium, color: colors.onSurfaceVariant, lineHeight: 21 },
+  error: { ...typography.bodyMedium, color: colors.error, lineHeight: 21 },
+  warning: { ...typography.bodyMedium, color: colors.pending },
+  divider: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, marginVertical: spacing.sm },
+  line: { height: 1, backgroundColor: colors.border, flex: 1 },
+  bubble: { maxWidth: '94%', padding: spacing.md, gap: spacing.sm, borderRadius: radii.md },
+  userBubble: { alignSelf: 'flex-end', backgroundColor: colors.surfaceVariant, borderBottomRightRadius: 6 },
+  agentBubble: { alignSelf: 'flex-start', padding: spacing.md, gap: spacing.sm, borderRadius: radii.md, borderBottomLeftRadius: 6, backgroundColor: colors.glass, borderWidth: 1, borderColor: colors.border },
+  turnLabel: { ...typography.labelMedium, color: colors.onSurfaceVariant, letterSpacing: 0.8 },
+  // Smaller than the message itself: a status indicator of what has been
+  // captured so far, not part of what the agent "says" (product requirement).
+  capturedSummary: { ...typography.labelMedium, fontWeight: '400', color: colors.onSurfaceVariant, lineHeight: 16 },
+  message: { ...typography.bodyLarge, color: colors.onSurface, lineHeight: 24 },
+  preview: { width: '100%', height: 150, borderRadius: radii.sm },
+  turnImage: { width: 140, height: 100, borderRadius: radii.sm },
+  composerArea: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderTopWidth: 1, borderTopColor: colors.border },
+  composer: { flexDirection: 'row', alignItems: 'flex-end', padding: spacing.sm, gap: spacing.xs, backgroundColor: colors.surface, borderRadius: radii.lg, borderWidth: 1, borderColor: colors.border },
+  input: { flex: 1, color: colors.onSurface, ...typography.bodyLarge, minHeight: MIN_TOUCH_TARGET, maxHeight: 140, paddingHorizontal: spacing.sm, paddingVertical: 12 },
+  mic: { width: MIN_TOUCH_TARGET, height: MIN_TOUCH_TARGET, borderRadius: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primary },
+  recording: { backgroundColor: colors.error },
+  iconButton: { width: MIN_TOUCH_TARGET, minHeight: MIN_TOUCH_TARGET, alignItems: 'center', justifyContent: 'center' },
+  textButton: { minHeight: MIN_TOUCH_TARGET, justifyContent: 'center', alignItems: 'center' },
+  link: { ...typography.bodyMedium, color: colors.primary },
+  destructive: { color: colors.error },
 });

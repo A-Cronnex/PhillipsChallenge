@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { getRepositories } from '../../../lib/container';
 import {
   loadMapData,
   type MapViewData,
 } from '../application/load-map-data';
+import { startRegionDownload } from '../application/download-region';
+import { PREDEFINED_REGIONS } from '../domain/predefined-regions';
 import type { MappedSite } from '../domain/map-features';
 
 export type MapScreenPhase = 'loading' | 'ready' | 'unavailable';
@@ -21,6 +23,7 @@ export function useMapData() {
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<MapViewData | null>(null);
   const [selectedSiteId, setSelectedSiteId] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(async () => {
     setPhase('loading');
@@ -56,6 +59,47 @@ export function useMapData() {
     void load();
   }, [load]);
 
+  /** Re-reads only the region rows — cheap, and safe to call on a timer while a download is in flight. */
+  const refreshRegions = useCallback(async () => {
+    const repositories = await getRepositories();
+    const regions = await repositories.mapRegions.listRegions();
+    setData((current) => (current ? { ...current, regions } : current));
+  }, []);
+
+  // While any region is downloading, poll its row for progress. MapLibre's
+  // OfflineManager reports progress natively; going through the database
+  // (rather than threading a live callback up from the service) keeps this
+  // hook's only source of truth the same one the rest of the screen reads,
+  // and survives the screen unmounting mid-download.
+  useEffect(() => {
+    const downloading = data?.regions.some((region) => region.status === 'downloading') ?? false;
+
+    if (downloading && !pollRef.current) {
+      pollRef.current = setInterval(() => void refreshRegions(), 1000);
+    } else if (!downloading && pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+
+    return () => {
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
+  }, [data?.regions, refreshRegions]);
+
+  const downloadRegion = useCallback(
+    async (regionId: string) => {
+      const region = PREDEFINED_REGIONS.find((candidate) => candidate.id === regionId);
+      if (!region) return;
+      const repositories = await getRepositories();
+      await startRegionDownload(region, { mapRegions: repositories.mapRegions });
+      await refreshRegions();
+    },
+    [refreshRegions]
+  );
+
   const selectedSite: MappedSite | null =
     data?.dataset.sites.find((site) => site.siteId === selectedSiteId) ?? null;
 
@@ -68,5 +112,6 @@ export function useMapData() {
     selectSite: setSelectedSiteId,
     clearSelection: useCallback(() => setSelectedSiteId(null), []),
     reload: load,
+    downloadRegion,
   };
 }

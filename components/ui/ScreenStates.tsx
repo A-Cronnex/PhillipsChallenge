@@ -80,7 +80,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: spacing.lg,
     marginTop: spacing.md,
-    borderRadius: 4,
+    borderRadius: 12,
     backgroundColor: colors.primary,
   },
   retryText: { ...typography.titleMedium, color: colors.onPrimary },

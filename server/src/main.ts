@@ -19,6 +19,7 @@ import { createSyncEndpoint, type HttpRequest } from './http/sync-endpoint';
 import { createRejectingAuthenticator, type Authenticator } from './http/authentication';
 import { createInsecureDevAuthenticator } from './http/dev-authenticator';
 import { createPostgresSyncStore } from './infrastructure/postgres/postgres-sync-store';
+import { createPostgresPullStore } from './infrastructure/postgres/postgres-pull-store';
 import { createPostgresPool } from './infrastructure/postgres/pool';
 
 /** Caps a request body so an oversized upload cannot exhaust memory. */
@@ -84,6 +85,7 @@ export function main(): void {
       pool,
       logError: (message) => console.error(`[sync] ${message}`),
     }),
+    pullStore: createPostgresPullStore({ pool }),
     authenticator: resolveAuthenticator(),
     now: () => new Date(),
     logError: (message) => console.error(`[sync] ${message}`),

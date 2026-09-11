@@ -16,4 +16,12 @@ export interface SiteSummary {
 export interface SiteRepository {
   /** Locally available sites, ordered by name. Never performs a network call. */
   listSites(): Promise<SiteSummary[]>;
+
+  /**
+   * One site by id, for a screen that identifies its subject from a route
+   * param rather than from an already-loaded list (e.g. the observation
+   * history screen, reached by id from the map). Null if no such site is
+   * stored locally.
+   */
+  getSite(siteId: string): Promise<SiteSummary | null>;
 }

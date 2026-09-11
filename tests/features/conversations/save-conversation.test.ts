@@ -5,7 +5,9 @@ const now = () => new Date('2026-09-09T12:00:00Z');
 const createState = () => recordField(startConversation('chat', 'user', now().toISOString()), 'brand', {
   value: 'Original', status: 'confirmed', confidence: 'high', source: 'image' });
 const draft = { ...emptyObservationDraft(), siteId: 'site', visitDate: '2026-09-09', brand: 'Original', attributeConfidence: { brand: 'high' as const } };
-const deps = () => ({ now, newId: () => 'observation', repository: { save: jest.fn(), latest: jest.fn(), finalize: jest.fn(async () => {}) } });
+const deps = () => ({ now, newId: () => 'observation', repository: { save: jest.fn(), latest: jest.fn(), finalize: jest.fn(async () => {}),
+  // Saving must never delete: present only to satisfy the port.
+  deleteConversation: jest.fn(async () => { throw new Error('saving must not delete'); }) } });
 test('invalid review never reaches persistence', async () => {
   const d = deps();
   await expect(saveConversation(createState(), { ...draft, siteId: null }, d)).rejects.toThrow('Revisa');

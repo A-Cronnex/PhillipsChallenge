@@ -1,20 +1,28 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getRepositories } from '../../../lib/container';
 import { newId } from '../../../lib/id';
-import { submitPhoto, submitText, submitVoice, type TurnOutcome } from '../application/conversation-orchestrator';
-import type { AiRuntime } from '../application/ports';
+import { submitText, submitVoice, submitVoiceTranscript, submitReviewedPhoto, type TurnOutcome } from '../application/conversation-orchestrator';
+import type { AiRuntime, AgentActivity, ModelReadiness, PrepareProgress } from '../application/ports';
+import type { NameplateProposal } from '../application/nameplate-review';
+import type { ExtractedValue } from '../domain/extraction';
 import { addTurn, startConversation, type ConversationState } from '../domain/conversation';
 import { acceptsMorePhotos } from '../domain/vision-flow';
+import { useResponseDelivery } from './useResponseDelivery';
 
 export type RuntimePhase = 'idle' | 'preparing' | 'ready' | 'unavailable';
 export interface UseConversationOptions { runtime: AiRuntime; userId: string; now?: () => Date }
 const clock = () => new Date();
 
 export function useConversation({ runtime, userId, now = clock }: UseConversationOptions) {
+  const response = useResponseDelivery();
   const [runtimePhase, setRuntimePhase] = useState<RuntimePhase>('idle');
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
+  /** Which weights this device already has. Null until the check answers. */
+  const [readiness, setReadiness] = useState<ModelReadiness | null>(null);
+  const [progress, setProgress] = useState<PrepareProgress | null>(null);
   const [conversation, setConversation] = useState(() => startConversation(newId(), userId, now().toISOString()));
   const [busy, setBusy] = useState(false);
+  const [activity, setActivity] = useState<AgentActivity>('idle');
   const [restoring, setRestoring] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
@@ -31,27 +39,58 @@ export function useConversation({ runtime, userId, now = clock }: UseConversatio
     return () => { active = false; };
   }, [userId]);
 
+  // The runtime is a process-wide singleton (lib/ai-runtime.ts), so models
+  // loaded earlier in this session are still loaded when this screen is
+  // mounted again — for instance after going back to the capture launcher and
+  // opening the agent a second time. Asking spares the user a load gate that
+  // has nothing left to load. A failure here is not reported: the gate is the
+  // fallback, and pressing it surfaces any real problem.
+  useEffect(() => {
+    let active = true;
+    void runtime.isReady()
+      .then(ready => {
+        if (active && ready) setRuntimePhase(phase => (phase === 'idle' ? 'ready' : phase));
+      })
+      .catch(() => {});
+    // Models are downloaded once and reused offline, so the user is told up
+    // front whether this device still needs a download (product requirement,
+    // 2026-09-10). Runs after paint and never blocks the screen; a failure
+    // leaves `readiness` null and the UI simply says nothing about sizes.
+    void runtime.modelReadiness?.()
+      .then(value => { if (active) setReadiness(value); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [runtime]);
+
   const checkpoint = useCallback(async (state: ConversationState) => {
-    setConversation(state);
     await (await getRepositories()).conversations.save(state);
+    setConversation(state);
   }, []);
   const prepare = useCallback(async () => {
     if (lock.current) return;
     lock.current = true;
-    setRuntimePhase('preparing'); setRuntimeError(null);
-    try { await runtime.prepare(); setRuntimePhase('ready'); }
+    setRuntimePhase('preparing'); setRuntimeError(null); setProgress(null);
+    try {
+      await runtime.prepare(setProgress);
+      setRuntimePhase('ready');
+      // The device now holds every asset, so say so instead of leaving the
+      // stale "faltan N modelos" from before the download.
+      void runtime.modelReadiness?.().then(setReadiness).catch(() => {});
+    }
     catch { setRuntimeError('No se pudo cargar QVAC. Comprueba conexión para la primera descarga, espacio libre y compatibilidad del dispositivo.'); setRuntimePhase('unavailable'); }
-    finally { lock.current = false; }
+    finally { lock.current = false; setProgress(null); }
   }, [runtime]);
 
-  async function run(action: () => Promise<TurnOutcome>): Promise<boolean> {
+  async function run(action: () => Promise<TurnOutcome>, onCommitted?: () => void): Promise<boolean> {
     if (lock.current || restoring || restoreFailed.current || conversation.status === 'saved') return false;
-    lock.current = true; setBusy(true); setError(null); setWarning(null);
+    lock.current = true; setBusy(true); setActivity('thinking'); setError(null); setWarning(null);
     try {
       const outcome = await action();
       if (outcome.status === 'ok') {
-        const state = addTurn(outcome.result.conversation, { role: 'agent', text: outcome.result.message, source: 'text', at: now().toISOString() });
-        await checkpoint(state);
+        setActivity('responding');
+        const state = addTurn(outcome.result.conversation, { role: 'agent', text: outcome.result.message, source: 'text',
+          at: now().toISOString(), capturedSummary: outcome.result.capturedSummary });
+        await response.reveal(state.turns.length - 1, outcome.result.message, async () => { await checkpoint(state); onCommitted?.(); });
         if (outcome.result.rejected.length) setWarning('Algunos valores propuestos no superaron la validación. Revisa los campos antes de guardar.');
       } else {
         await checkpoint(outcome.conversation);
@@ -61,22 +100,55 @@ export function useConversation({ runtime, userId, now = clock }: UseConversatio
     } catch {
       setError('No se pudo completar el turno o guardar sus cambios. Conserva esta pantalla y reintenta.');
       return false;
-    } finally { lock.current = false; setBusy(false); }
+    } finally { lock.current = false; setBusy(false); setActivity('idle'); }
   }
-  const deps = { runtime, now, language: 'es' as const, checkpoint };
+  const deps = { runtime, now, language: 'es' as const, checkpoint,
+    onResponding: () => setActivity('responding') };
   return {
-    conversation, runtimePhase, runtimeError, busy: busy || restoring || restoreFailed.current, error, warning, prepare,
+    conversation, runtimePhase, runtimeError, readiness, progress, activity, delivery: response.delivery, finishDelivery: response.complete,
+    busy: busy || restoring || restoreFailed.current, error, warning, prepare,
     sendText: (text: string) => run(() => submitText(conversation, text, deps)),
-    sendPhoto: (path: string) => run(() => submitPhoto(conversation, path, deps)),
+    acceptPhoto: (proposal: NameplateProposal, edits: ExtractedValue[], onCommitted?: () => void) => run(() => submitReviewedPhoto(conversation, proposal, edits, deps), onCommitted),
+    sendVoiceTranscript: (text: string, path: string) => run(() => submitVoiceTranscript(conversation, text, path, deps)),
+    retainVoiceInput: (path: string) => checkpoint(addTurn(conversation, { role: 'user', source: 'voice',
+      reference: path, text: '[audio pendiente de transcripción]', at: now().toISOString() })),
+    retainPhotoInput: (path: string | null) => checkpoint({ ...conversation, pendingImagePath: path }),
     sendVoice: (path: string) => run(() => submitVoice(conversation, path, deps)),
     retryLast() {
       const turn = [...conversation.turns].reverse().find(item => item.role === 'user');
       if (!turn) return Promise.resolve(false);
-      if (turn.source === 'image' && turn.reference) return run(() => submitPhoto(conversation, turn.reference!, deps));
+      // Photo retries stay in the human review flow; never bypass confirmation.
+      if (turn.source === 'image') return Promise.resolve(false);
       if (turn.source === 'voice' && turn.reference) return run(() => submitVoice(conversation, turn.reference!, deps));
       return run(() => submitText(conversation, turn.text, deps));
     },
     markSaved: () => setConversation(state => ({ ...state, status: 'saved' })),
+    /**
+     * Discards the current conversation and starts a fresh one.
+     *
+     * Returns the repository's refusal unchanged rather than turning it into a
+     * generic failure: "already synchronized" and "it produced an observation"
+     * are different situations and the user can act on the difference.
+     */
+    async deleteConversation(): Promise<import('../application/ports').ConversationDeleteResult> {
+      if (lock.current) return { status: 'refused', reason: 'sync_in_flight' };
+      lock.current = true; setBusy(true);
+      try {
+        const repositories = await getRepositories();
+        const result = await repositories.conversations.deleteConversation(conversation.id);
+        if (result.status === 'deleted') {
+          // A fresh state, not a reload: `latest()` would return whatever came
+          // before, which is not what "eliminar" means to the user.
+          const fresh = startConversation(newId(), userId, now().toISOString());
+          await repositories.conversations.save(fresh);
+          setConversation(fresh); setError(null); setWarning(null);
+        }
+        return result;
+      } catch {
+        setError('No se pudo eliminar la conversación. Puedes reintentar.');
+        return { status: 'refused', reason: 'sync_in_flight' };
+      } finally { lock.current = false; setBusy(false); }
+    },
     async newConversation() {
       if (lock.current) return;
       lock.current = true; setBusy(true);

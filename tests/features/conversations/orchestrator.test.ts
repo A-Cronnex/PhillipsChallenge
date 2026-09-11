@@ -32,7 +32,7 @@ function runtime(script: {
   const image = [...(script.image ?? [])];
   const text = [...(script.text ?? [])];
 
-  const nothing: AgentExtraction = { values: [], followUpQuestion: null };
+  const nothing: AgentExtraction = { values: [] };
 
   return {
     imageCalls,
@@ -72,7 +72,6 @@ const found = (
   confidence = 'high'
 ): AgentExtraction => ({
   values: [{ field, value, status, confidence }] as AgentExtraction['values'],
-  followUpQuestion: null,
 });
 
 describe('submitPhoto — docs/ai-agent.md §3a', () => {
@@ -99,7 +98,7 @@ describe('submitPhoto — docs/ai-agent.md §3a', () => {
   });
 
   it('asks for another photo when the field is not visible', async () => {
-    const ai = runtime({ image: [{ values: [], followUpQuestion: null }] });
+    const ai = runtime({ image: [{ values: [] }] });
     const outcome = await submitPhoto(conversation(), '/tmp/a.jpg', deps(ai));
 
     expect(outcome.status).toBe('ok');
@@ -114,7 +113,7 @@ describe('submitPhoto — docs/ai-agent.md §3a', () => {
   });
 
   it('suggests voice after the second photo also fails (rule 1)', async () => {
-    const empty = { values: [], followUpQuestion: null };
+    const empty = { values: [] };
     const ai = runtime({ image: [empty, empty] });
 
     const first = await submitPhoto(conversation(), '/tmp/a.jpg', deps(ai));
@@ -133,7 +132,7 @@ describe('submitPhoto — docs/ai-agent.md §3a', () => {
 
   it('does not re-ask a field captured from an earlier photo (rule 3)', async () => {
     const ai = runtime({
-      image: [found('brand', 'Philips'), { values: [], followUpQuestion: null }],
+      image: [found('brand', 'Philips'), { values: [] }],
     });
 
     const first = await submitPhoto(conversation(), '/tmp/a.jpg', deps(ai));
@@ -231,9 +230,8 @@ describe('failure handling — docs/ai-agent.md §13', () => {
           values: [
             { field: 'serialNumber', value: 'X1', status: 'confirmed', confidence: 'high' },
           ],
-          followUpQuestion: null,
         }) as never,
-      extractFromText: async () => ({ values: [], followUpQuestion: null }),
+      extractFromText: async () => ({ values: [] }),
       transcribe: async () => '',
     };
 
@@ -252,17 +250,19 @@ describe('completion of the conversation', () => {
         { field: 'modality', value: 'Monitor', status: 'confirmed', confidence: 'high' },
         { field: 'quantity', value: 5, status: 'reported', confidence: 'medium' },
         { field: 'siteName', value: 'Hospital Example', status: 'reported', confidence: 'high' },
+        { field: 'country', value: 'Panamá', status: 'reported', confidence: 'high' },
+        { field: 'city', value: 'David', status: 'reported', confidence: 'high' },
       ],
-      followUpQuestion: null,
     };
     const ai = runtime({ text: [all] });
 
-    // The site name appears in what the user said: free-text values must be
-    // the user's own words (docs/tech-stack.md §7.2), and the runtime only
-    // ever sees the current turn, so a name absent from it would be dropped.
+    // The site name, country and city all appear in what the user said: free-text
+    // values must be the user's own words (docs/tech-stack.md §7.2), and the
+    // runtime only ever sees the current turn, so a name absent from it would be
+    // dropped.
     const outcome = await submitText(
       conversation(),
-      'cinco monitores Philips en el Hospital Example',
+      'cinco monitores Philips en el Hospital Example en David, Panamá',
       deps(ai)
     );
     expect(outcome.status).toBe('ok');
@@ -272,15 +272,19 @@ describe('completion of the conversation', () => {
     expect(outcome.result.conversation.status).toBe('awaiting_confirmation');
   });
 
-  it('prefers the model’s own follow-up question when it produced one', async () => {
-    const ai = runtime({
-      text: [{ values: [], followUpQuestion: '¿De qué marca son los equipos?' }],
-    });
+  it('always asks the deterministic question — MedPsy no longer proposes its own follow-up text', async () => {
+    // The schema has no followUpQuestion field any more (2026-09-10): a model
+    // that still emitted one would simply have it ignored, since AgentExtraction
+    // no longer carries it at all. The message is built solely from domain
+    // state: what is missing, then the next deterministic question.
+    const ai = runtime({ text: [{ values: [] }] });
 
     const outcome = await submitText(conversation(), 'hola', deps(ai));
     expect(outcome.status).toBe('ok');
     if (outcome.status !== 'ok') return;
-    expect(outcome.result.message).toBe('¿De qué marca son los equipos?');
+    expect(outcome.result.message).toBe(
+      'Todavía necesito: la cantidad de equipos, el nombre del sitio, el país, la ciudad, la marca, la modalidad. ¿Puedes tomar una foto de la placa del equipo donde se vea la marca?'
+    );
   });
 });
 
@@ -345,7 +349,6 @@ describe('free text stays in the user’s language — docs/tech-stack.md §7.2'
               confidence: 'medium',
             },
           ],
-          followUpQuestion: null,
         } as AgentExtraction,
       ],
     });

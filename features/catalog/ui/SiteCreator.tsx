@@ -1,5 +1,7 @@
+import { colors } from '../../../lib/theme';
+import { AppButton as Button } from '../../../components/ui/AppButton';
 import { useState } from 'react';
-import { View, Text, Button } from 'react-native';
+import { View, Text } from 'react-native';
 import { TextField } from '../../../components/forms/TextField';
 import { getRepositories } from '../../../lib/container';
 
@@ -24,8 +26,8 @@ export function SiteCreator({ onCreated }: { onCreated: (id: string) => void | P
   return <View style={{ gap: 8 }}>
     {Object.entries(labels).map(([key, label]) => <TextField key={key} label={label}
       value={values[key as keyof typeof values]} onChangeText={value => setValues(current => ({ ...current, [key]: value }))} />)}
-    <Text>Sin coordenadas, el sitio se guarda pero no aparece como punto en el mapa.</Text>
-    {error ? <Text accessibilityRole="alert">{error}</Text> : null}
+    <Text style={{ color: colors.onSurfaceVariant }}>Sin coordenadas, el sitio se guarda pero no aparece como punto en el mapa.</Text>
+    {error ? <Text style={{ color: colors.error }} accessibilityRole="alert">{error}</Text> : null}
     <Button title={busy ? 'Guardando…' : 'Guardar sitio'} disabled={busy} onPress={() => void save()} />
     <Button title="Cancelar" disabled={busy} onPress={() => setOpen(false)} />
   </View>;

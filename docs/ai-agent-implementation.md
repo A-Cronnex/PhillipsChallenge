@@ -18,7 +18,7 @@ what was verified, and what cannot be verified without a physical device.
 `app.json` plugins, in order: `expo-router`, `expo-sqlite`,
 `@maplibre/maplibre-react-native`,
 `["expo-build-properties", { "android": { "minSdkVersion": 29 } }]`,
-`@qvac/sdk/expo-plugin`, `expo-audio`, `expo-image-picker` (with Spanish
+`@qvac/sdk/expo-plugin`, `expo-audio`, `expo-image-picker`, `react-native-audio-api` (with Spanish
 permission strings that state the photo never leaves the device).
 
 ## 2. Node 24 build baseline
@@ -59,7 +59,9 @@ Three things that cost time to rediscover:
 
 ## 4. Integration completed on September 9, 2026
 
-The es→en working-copy bridge and en→es follow-up translation are now wired.
+The es→en working-copy bridge is wired. (An en→es follow-up translation leg
+existed briefly but was removed on 2026-09-10 along with the
+`followUpQuestion` field itself — see §8.4 and `docs/ai-agent.md` §12.)
 Bergamot directions are specified in `loadModel.modelConfig`; `translate()`
 uses `modelType: 'nmtcpp-translation'`, and its `.text` is awaited. MedPsy gets
 both original input and transient English context; the language guard still
@@ -76,7 +78,10 @@ They do not bundle the model weights in the APK. Text loads at preparation;
 translation, speech and vision load on demand. First use of every modality must
 happen online before field work. Quality, latency and memory remain device checks.
 
-Voice recording is connected through expo-audio. Camera/audio cache files are
+The original file recorder uses expo-audio. The main capture UI now uses
+react-native-audio-api PCM → QVAC streaming with Whisper + Silero VAD, with
+partial transcripts and automatic final submission (see
+[agent-capture-ui.md](agent-capture-ui.md)). Camera/audio cache files are
 copied to private document storage before saving references. The orchestrator
 checkpoints inputs before inference, including audio before transcription.
 `conversation_drafts` holds local JSON snapshots; the latest conversation is
@@ -96,8 +101,10 @@ See [implementation-status.md](implementation-status.md) and the
 ## 5. Layering
 
 ```
-app/(tabs)/conversations/index.tsx      route: resolves user + runtime
-features/conversations/ui/              ConversationScreen, useConversation
+app/(tabs)/capture/index.tsx            route: resolves user, passes the
+                                        runtime factory unresolved
+features/conversations/ui/              CaptureLauncher, ConversationScreen,
+                                        useConversation
 features/conversations/application/     orchestrator, ports (AiRuntime)
 features/conversations/domain/          conversation, fields, vision-flow,
                                         extraction, value-rules, language,
@@ -231,8 +238,10 @@ other free-text fields to be persisted in the user's language, with MedPsy's
 English as a transient working copy. Enforced in two places:
 
 - **Prompt** (`services/ai/prompts.ts`): the model is told to copy the user's
-  own words character for character for the language-sensitive fields, and to
-  write the follow-up question in the user's language.
+  own words character for character for the language-sensitive fields. (It
+  used to also be told to write the follow-up question in the user's
+  language; that instruction and the field it governed were removed
+  2026-09-10 — see §4 above and `docs/ai-agent.md` §12.)
 - **Domain** (`features/conversations/domain/language.ts`): the prompt is a
   request, and model output is never trusted (CLAUDE.md §7). For a text or
   voice turn, a language-sensitive value must be found in **what the user
@@ -291,7 +300,9 @@ Use [android-installation.md](android-installation.md) to install the app.
 
 - [ ] First-use model download completes; later cached loads work without Internet.
 - [ ] MedPsy extracts numbers and identifiers from real field descriptions.
-- [ ] Bergamot translates both directions and follow-ups remain Spanish.
+- [ ] Bergamot translates the Spanish input to English for MedPsy's working
+  copy; the agent's own follow-up questions stay Spanish (they are composed
+  by the application, not translated — §4, §8.4).
 - [ ] VisionPsy + projector accepts the retained camera file and reads a nameplate.
 - [ ] Poor image → one photo re-request per field → voice suggestion; camera remains available.
 - [ ] Voice permissions, recording, stopping and transcription work; backgrounding stops recording.
@@ -304,3 +315,17 @@ Use [android-installation.md](android-installation.md) to install the app.
 - [ ] Validate expo-sqlite foreign keys, persistence and transaction rollback on Android.
 - [ ] Validate MapLibre rendering, site taps and offline region download with self-hosted resources.
 - [ ] Test configured HTTPS synchronization, expired/revoked credentials and retry after connection loss.
+
+## 11. Main capture UI — September 10, 2026
+
+See [agent-capture-ui.md](agent-capture-ui.md) for the dark shared theme,
+Animated orb, live local speech, explicit editable nameplate review and
+character-by-character response presentation. A photo proposal never changes
+captured fields before human approval. The local `pendingImagePath` snapshot
+reference preserves interrupted input; it is cleared on approval/discard.
+
+The new audio native module requires rebuilding the development client.
+`expo-font` is pinned to the Expo 54 version after a FontLoaderModule crash was
+reproduced on the Pixel 10a with a mismatched transitive version. The corrected
+ARM64 development APK builds, installs and opens on that device. Model quality
+and end-to-end voice/vision remain distinct physical checks.

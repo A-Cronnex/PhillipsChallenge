@@ -12,6 +12,16 @@ ios/
 /dist/
 /build/
 server/dist/
+tileserver/dist/
+
+# Self-hosted basemap build artifacts — produced by `npm run build-tiles`
+# (tileserver/scripts/build-tiles.ts), not committed: Planetiler output and
+# OpenFreeMap assets fetched at build time, not data this repository owns.
+# `tileserver/styles/liberty.json` IS committed (small, refreshed by the same
+# script) so `npm start` works without a fetch.
+tileserver/data/
+tileserver/assets/
+tileserver/vendor/
 
 # Logs
 npm-debug.log*

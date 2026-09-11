@@ -275,8 +275,8 @@ Do not invent final decisions for:
 - Production deployment configuration.
 - Data retention policy.
 - Encryption implementation.
-- Soft-delete strategy (now blocking: it gates record deletion and the
-  synchronization download direction).
+- Soft-delete strategy (gates record deletion; no longer gates the download
+  direction, which carries creates and updates only).
 - How a resolved synchronization conflict is surfaced to the field user.
 
 When one of these decisions is required, explain the options and
@@ -291,7 +291,8 @@ see the linked section rather than treating them as open:
   `docs/tech-stack.md` §4a.
 - Exact backend technology → Node.js + PostgreSQL, `docs/tech-stack.md` §5.
 - Synchronization protocol, upload direction → `POST /v1/sync`,
-  `docs/sync-api.md`. The download direction is **not** implemented and is
-  still open, for the reasons in `docs/sync-api.md` §2.
+  `docs/sync-api.md`. The download direction is implemented as
+  `POST /v1/sync/pull`; its cursor, scope and conflict rule are in
+  `docs/sync-api.md` §2.
 - Server schema → `server/migrations/001_initial_schema.sql`,
   `docs/sync-api.md` §6.

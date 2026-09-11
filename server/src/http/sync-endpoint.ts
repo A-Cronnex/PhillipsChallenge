@@ -9,11 +9,13 @@
  * Jest run, without binding a socket or committing to a web framework that
  * docs/tech-stack.md §5 never named.
  */
-import type { SyncErrorResponse, SyncRequest } from '../../../types/sync-contract';
-import { SYNC_ENDPOINT_PATH } from '../../../types/sync-contract';
+import type { SyncErrorResponse, SyncPullRequest, SyncRequest } from '../../../types/sync-contract';
+import { SYNC_ENDPOINT_PATH, SYNC_PULL_PATH } from '../../../types/sync-contract';
 import { synchronizeBatch } from '../application/sync-service';
-import type { SyncServiceDeps } from '../application/ports';
+import { readPullPage } from '../application/pull-service';
+import type { SyncPullStore, SyncServiceDeps } from '../application/ports';
 import { isUuid } from '../validation/validate-change';
+import { validatePullRequest } from '../validation/validate-pull';
 import type { Authenticator } from './authentication';
 
 export interface HttpRequest {
@@ -32,6 +34,13 @@ export interface HttpResponse {
 
 export interface SyncEndpointDeps extends SyncServiceDeps {
   authenticator: Authenticator;
+  /**
+   * Absent until a deployment enables the download direction, in which case
+   * `/v1/sync/pull` answers 404 — the same as any unknown path, so a client
+   * cannot tell a disabled feature from a typo and no half-working pull is
+   * implied.
+   */
+  pullStore?: SyncPullStore;
   /**
    * Where unexpected failures go. Injected rather than calling `console`
    * directly so a deployment can route it, and so tests can assert that a
@@ -57,7 +66,8 @@ function error(
 
 export function createSyncEndpoint(deps: SyncEndpointDeps) {
   return async function handleSync(request: HttpRequest): Promise<HttpResponse> {
-    if (request.path !== SYNC_ENDPOINT_PATH) {
+    const isPull = request.path === SYNC_PULL_PATH && deps.pullStore !== undefined;
+    if (request.path !== SYNC_ENDPOINT_PATH && !isPull) {
       return error(404, 'malformed_request', 'Unknown path.');
     }
 
@@ -103,6 +113,20 @@ export function createSyncEndpoint(deps: SyncEndpointDeps) {
         'unauthenticated',
         '"deviceId" does not match the authenticated device.'
       );
+    }
+
+    if (isPull) {
+      // Same authentication, same device-identity check, different body.
+      const validation = validatePullRequest(parsed as Partial<SyncPullRequest>, auth.principal.userId);
+      if (!validation.ok) return error(400, 'malformed_request', validation.message);
+      try {
+        return json(200, await readPullPage(validation.cursor, validation.scope, validation.limit, {
+          pullStore: deps.pullStore!, now: deps.now,
+        }));
+      } catch (thrown) {
+        deps.logError?.(`sync: pull failed (${thrown instanceof Error ? thrown.name : 'unknown'})`);
+        return error(500, 'internal_error', 'The page could not be read.');
+      }
     }
 
     try {
