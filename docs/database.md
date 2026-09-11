@@ -220,9 +220,11 @@ Still open:
 - Encryption implementation.
 - Data retention policy — now also covering the server's `sync_conflicts`
   archive, which grows without bound.
-- Soft-delete strategy. This one now blocks concrete work: the sync endpoint
-  rejects `operation: 'delete'`, and the download direction cannot express a
-  deletion without tombstones (`docs/sync-api.md` §2, §10).
+- Soft-delete strategy. Still open, but **no longer blocking the download
+  direction**: the pull carries creates and updates only, the same restriction
+  the upload already had (`docs/sync-api.md` §2). What it still blocks is
+  expressing a deletion at all — a record removed centrally stays on every
+  device that already holds it.
 
 ## 17. Implemented Schema — Migration 001
 
@@ -249,9 +251,10 @@ Shared enumerations live in `types/domain.ts`.
   are not enumerated in any document; `docs/ai-agent.md` §7 shows only
   `unknown`. Constraining it would mean inventing a vocabulary
   (`CLAUDE.md` §8).
-- **No `last_synced_at` anywhere.** The incremental-sync cursor described
-  in `docs/tech-stack.md` §8 is still *Proposed*; it is device-level
-  state, not per-record, and has no confirmed home yet.
+- **No `last_synced_at` anywhere.** Confirmed as device-level state, not a
+  per-record column: the download cursor lives in `local_settings` under
+  `sync.pull_cursor` (migration 002), and holds the server's own change
+  sequence rather than a local clock (`docs/sync-api.md` §2).
 - **No encryption.** `CLAUDE.md` §15 requires the protection of sensitive
   local data to be documented, and §18 lists the encryption
   implementation as unresolved. The database file is currently stored
