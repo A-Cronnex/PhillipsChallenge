@@ -45,7 +45,8 @@ function buildRepositories(options: {
 }): Repositories {
   return {
     catalog: { listEquipment: async () => [], createLocalUser: async () => USER, createSite: async () => SITE.id },
-    conversations: { save: async () => {}, latest: async () => null, finalize: async () => {} },
+    conversations: { save: async () => {}, latest: async () => null, finalize: async () => {},
+      deleteConversation: async () => { throw new Error('capture must not delete conversations'); } },
     sites: {
       listSites: async () => options.sites ?? [SITE],
       getSite: async () => (options.sites ?? [SITE])[0] ?? null,
@@ -89,6 +90,15 @@ function buildRepositories(options: {
     // save flow must not block on, or even reach, the network. These throw so
     // an accidental call fails loudly instead of quietly making capture
     // network-dependent.
+    // Capture must not download either: a pull writes business rows, and doing
+    // that while the user is filling a form would move the ground under them.
+    syncDownloads: {
+      getPullCursor: () => { throw new Error('capture must not run synchronization'); },
+      setPullCursor: () => { throw new Error('capture must not run synchronization'); },
+      listKnownSiteIds: () => { throw new Error('capture must not run synchronization'); },
+      listDownloadedRegionBounds: () => { throw new Error('capture must not run synchronization'); },
+      applyPulledChanges: () => { throw new Error('capture must not run synchronization'); },
+    },
     syncQueue: {
       releaseStaleSyncing: () => {
         throw new Error('capture must not run synchronization');
