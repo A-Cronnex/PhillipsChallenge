@@ -64,6 +64,33 @@ function fieldList(fields: CaptureField[]): string {
     .join('\n');
 }
 
+/**
+ * What to look for on a nameplate, per field.
+ *
+ * Deliberately English and descriptive, NOT `CAPTURE_FIELD_SPECS[f].label`:
+ * those are the Spanish conversational ask-phrases ("el modelo", "la marca"),
+ * and a small vision model given "model: el modelo" right before it fills in
+ * values copies that phrase back as the value (observed on device, 2026-09-10:
+ * the plate read came back as `model = "el modelo"`).
+ */
+const VISION_FIELD_HINTS: Partial<Record<CaptureField, string>> = {
+  brand: 'the manufacturer or brand name printed on the plate',
+  model: 'the model name or model number printed on the plate',
+  modality:
+    'the equipment type or imaging modality (for example MRI, CT, X-ray, ultrasound, patient monitor)',
+  estimatedInstallationYear:
+    'the installation year, only if the plate explicitly states it was installed that year',
+};
+
+function visionFieldList(fields: CaptureField[]): string {
+  return fields
+    .map(
+      (field) =>
+        `  - ${field}: ${VISION_FIELD_HINTS[field] ?? CAPTURE_FIELD_SPECS[field].label}`
+    )
+    .join('\n');
+}
+
 export function textExtractionPrompt(
   text: string,
   targetFields: CaptureField[],
@@ -100,11 +127,12 @@ export function imageExtractionPrompt(
   return [
     'You read nameplates and labels on medical equipment in photographs.',
     'First assess whether an actual equipment identification nameplate is visible. Return "nameplate": "detected", "not_detected", or "uncertain".',
+    'A printed label, sticker or engraved plate listing fields like manufacturer, model or serial number IS a nameplate, even at an angle or photographed off a screen.',
     'An arbitrary document, room, person or equipment silhouette is not a nameplate. If not detected, return no values. If uncertain, do not guess.',
     'A manufacture date is NOT an installation date. Only return estimatedInstallationYear if installation is explicitly stated on the plate.',
     '',
-    'Read ONLY these fields from the image:',
-    fieldList(targetFields),
+    'Read ONLY these fields from the image. The text after each field name describes what to look for; it is NOT a value and must never be copied into "value":',
+    visionFieldList(targetFields),
     '',
     'If a field is not legible in the image, set its "value" to null and "status" to "unknown".',
     'Do not guess a manufacturer or model from the equipment shape alone.',

@@ -36,8 +36,15 @@ test('does not overwrite already confirmed fields with a new photo', async () =>
   const proposal = await analyzeNameplate(runtime(valid), state, '/photo.jpg');
   expect(proposal.values).toEqual([model]);
 });
-test('requires legible fields and rejects invalid human edits', async () => {
-  await expect(analyzeNameplate(runtime({ ...valid, values: [{ ...brand, value: null, status: 'unknown' }] }), initial(), '/photo.jpg')).rejects.toThrow(/leer/);
+test('a detected plate with nothing legible still reaches review, with the fields listed as unreadable', async () => {
+  const proposal = await analyzeNameplate(runtime({ ...valid, values: [{ ...brand, value: null, status: 'unknown' }] }), initial(), '/photo.jpg');
+  expect(proposal.nameplate).toBe('detected');
+  expect(proposal.values).toEqual([]);
+  expect(proposal.unreadable).toEqual(expect.arrayContaining(['brand', 'modality']));
+  // ...but an all-empty review still cannot be submitted.
+  expect(() => validateNameplateEdits(proposal, proposal.unreadable.map(field => ({ field, value: null, status: 'unknown' as const, confidence: 'low' as const })))).toThrow(/al menos un dato/);
+});
+test('rejects invalid human edits', async () => {
   const proposal = await analyzeNameplate(runtime(valid), initial(), '/photo.jpg');
   expect(() => validateNameplateEdits(proposal, [{ ...brand, field: 'quantity', value: -1 }])).toThrow();
   expect(() => validateNameplateEdits(proposal, [{ ...brand, value: null }])).toThrow();
