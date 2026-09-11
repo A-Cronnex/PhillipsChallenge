@@ -12,24 +12,29 @@ policy), `docs/database.md` §16–§17 (schemas).
 
 ## 2. Scope — What Is and Is Not Implemented
 
-**Implemented: the upload (push) direction.**
+**Implemented: both directions.**
 
 ```
-device queue ──► POST /v1/sync ──► central Postgres
+device queue ──► POST /v1/sync      ──► central Postgres
              ◄── per-record outcomes ──
+device       ──► POST /v1/sync/pull ──► central Postgres
+             ◄── page of changes + cursor ──
 ```
 
-**Not implemented: the download (pull) direction.** This is not an oversight.
-Pulling requires three decisions that are still open:
+The download was blocked on three open decisions. All three are now resolved,
+and none of them was resolved by inventing a soft-delete strategy:
 
-| Requirement | Blocked on |
+| Requirement | Resolution |
 |---|---|
-| An incremental cursor | `docs/database.md` §17.2 — the cursor is *Proposed*, has no confirmed semantics, and until migration 002 had no storage at all. |
-| A scope for "the records this user needs" | `docs/offline-sync.md` §10 says the full dataset must not be downloaded, but not what the subset is. |
-| Tombstones for deletes | The soft-delete strategy is open (`docs/database.md` §16). Without it, a pull cannot express "this was removed". |
+| An incremental cursor | `server/migrations/002_pull_cursor.sql` adds a global `sync_change_seq` and stamps `sync_entity_state.change_seq` on every accepted write. The cursor is that value; the device stores it in `local_settings` under `sync.pull_cursor`. A per-entity `server_version` cannot order changes across entities, and a timestamp cursor would skip records written in the same millisecond. |
+| A scope for "the records this user needs" | The device sends the bounding boxes of the map regions it has **finished** downloading, plus the ids of sites it already holds. That is the product intent in `docs/maps.md` §15 — downloading a place's map is what says "I work here" — and it satisfies `docs/offline-sync.md` §10 without downloading the full dataset. Conversations are scoped by owner instead, since a conversation belongs to a person, not a place. |
+| Tombstones for deletes | **Not needed for creates and updates.** The pull carries those only, exactly as the upload already rejects `operation: 'delete'` with `unsupported_operation`. The soft-delete strategy stays open (`docs/database.md` §16) and nothing here pre-empts it. |
 
-Migration 002 (`local_settings`) gives the cursor a place to live when the
-decision is made. It does not make the decision.
+**Conflicts on the way down** follow the same confirmed client-wins policy as
+the way up (`docs/offline-sync.md` §8): a record with an unsent local change is
+**not** overwritten by the server's version. It is skipped, reported as
+`local_pending`, and the local edit goes out on the next upload. Nothing is
+discarded in either direction.
 
 Also out of scope, and listed in §10.
 
@@ -225,10 +230,11 @@ decision (CLAUDE.md §8). It is listed in §13 instead.
 
 | Not implemented | Why |
 |---|---|
-| Download / pull | §2. |
+| Deleting a record in either direction | No soft-delete strategy (`docs/database.md` §16), and historical observations must be preserved (`docs/offline-sync.md` §9). A record removed centrally stays on devices that already hold it. |
+| Discovering a site with no coordinates | The pull's region scope is geographic, so a coordinate-less site created on another device is invisible until it is either given coordinates or already held locally (it is then matched by id). |
 | `operation: 'delete'` | Rejected with `unsupported_operation`. No soft-delete strategy (`docs/database.md` §16), and historical observations must be preserved (`docs/offline-sync.md` §9). |
 | Binary upload (photos, audio) | `observation_sources.reference` travels as an opaque device path. Transferring the artifacts is a separate design (size limits, resumable upload, storage, retention). |
-| A UI trigger for a sync run | No screen invokes `runSynchronization` yet. The pieces are wired in `lib/container.ts`; what is missing is a deliberate UI decision — a manual button, a connectivity listener, or both. |
+| An automatic sync trigger | `SyncIconButton` runs both directions on demand, upload first. There is still no connectivity listener that syncs on its own. |
 | Automatic retry / backoff | A run stops after the first failed batch. Re-running is the caller's decision. |
 | Bluetooth | Out of MVP scope (CLAUDE.md §12). |
 

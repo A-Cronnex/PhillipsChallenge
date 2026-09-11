@@ -413,7 +413,13 @@ export function createPostgresSyncStore(deps: PostgresSyncStoreDeps): SyncStore 
                   last_applied_local_version = EXCLUDED.last_applied_local_version,
                   last_outcome = EXCLUDED.last_outcome,
                   last_previous_version = EXCLUDED.last_previous_version,
-                  last_applied_at = EXCLUDED.last_applied_at`,
+                  last_applied_at = EXCLUDED.last_applied_at,
+                  -- Every accepted write takes a new place in the global order
+                  -- so other devices see it on their next pull. The column
+                  -- DEFAULT covers the INSERT branch; an UPDATE would keep the
+                  -- old value and the change would be invisible to the pull
+                  -- (migrations/002_pull_cursor.sql).
+                  change_seq = nextval('sync_change_seq')`,
           [
             change.entityType,
             change.entityId,

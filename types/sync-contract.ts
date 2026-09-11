@@ -271,3 +271,88 @@ export interface SyncErrorResponse {
     message: string;
   };
 }
+
+// ---------------------------------------------------------------------------
+// Download (pull) direction — POST /v1/sync/pull
+// ---------------------------------------------------------------------------
+
+/**
+ * Separate path from the upload on purpose.
+ *
+ * The two directions fail, retry and are throttled independently: an upload
+ * that cannot land must not stop a device from receiving what the server
+ * already holds, and vice versa. Sharing one request shape would also have
+ * meant changing a contract the upload side is already tested against.
+ */
+export const SYNC_PULL_PATH = '/v1/sync/pull';
+
+/** One downloaded map region's bounding box, as `map_regions` stores it. */
+export interface PullRegion {
+  /** [west, south, east, north] — MapLibre's order, matching `BoundingBox`. */
+  bounds: [number, number, number, number];
+}
+
+/**
+ * What the device asks for.
+ *
+ * Scope is explicit and device-driven because `docs/offline-sync.md` §10
+ * forbids downloading the complete dataset by default. The subset is the one
+ * `docs/maps.md` §15 describes as the product intent: the places whose map the
+ * user has already downloaded, which is what "the sites I work in" means for a
+ * field device.
+ */
+export interface SyncPullRequest {
+  deviceId: string;
+  clientTime: string;
+  /**
+   * Opaque cursor returned by the previous pull, or `null` for a first one.
+   *
+   * The server's own change sequence, so a pull is resumable and repeatable:
+   * re-sending the same cursor returns the same page rather than skipping
+   * changes (docs/offline-sync.md §7).
+   */
+  cursor: string | null;
+  /** Bounding boxes of the map regions this device has finished downloading. */
+  regions: PullRegion[];
+  /**
+   * Sites the device already holds.
+   *
+   * Included alongside `regions` so a site the device knows keeps receiving
+   * updates even when it has no coordinates and therefore falls in no bounding
+   * box (`MappedSite` vs `UnmappableSite`, docs/maps.md §9).
+   */
+  knownSiteIds: string[];
+  /** Page size. Clamped by the server to `MAX_PULL_CHANGES`. */
+  limit?: number;
+}
+
+/** One record as the server currently holds it. */
+export interface PulledChange {
+  entityType: SyncEntityType;
+  entityId: string;
+  /** `sync_entity_state.server_version`; stored by the device for conflict detection. */
+  serverVersion: number;
+  updatedAt: string;
+  payload: SyncPayload;
+}
+
+export interface SyncPullResponse {
+  serverTime: string;
+  /** Ordered oldest change first, so applying them in order converges. */
+  changes: PulledChange[];
+  /** Send this back on the next pull. Unchanged when `changes` is empty. */
+  cursor: string;
+  /** More changes are waiting past `limit`; the caller should pull again. */
+  hasMore: boolean;
+}
+
+/**
+ * Caps on one pull.
+ *
+ * Same reasoning as `MAX_CHANGES_PER_BATCH`: a bounded response is what makes
+ * the download resumable on a bad connection instead of one oversized request
+ * that never completes. Starting values, not measured ones.
+ */
+export const MAX_PULL_CHANGES = 100;
+export const MAX_PULL_REGIONS = 50;
+export const MAX_PULL_KNOWN_SITES = 500;
