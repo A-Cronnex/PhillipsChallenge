@@ -1,4 +1,4 @@
-# Hospital Equipment Intelligence
+# Promet
 
 Aplicación Expo/React Native para registrar equipos y observaciones hospitalarias
 sin conexión, con captura manual y un agente local de texto, fotos y voz.
