@@ -1,5 +1,4 @@
 import { SyncIconButton } from '../../synchronization/ui/SyncIconButton';
-import { SyncPanel } from '../../synchronization/ui/SyncPanel';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { BarChart, type BarChartDatum } from '../../../components/ui/BarChart';
@@ -66,7 +65,6 @@ export function DashboardScreen() {
           <Text style={styles.topBarTitle}>Sincronización</Text>
           <SyncIconButton onComplete={dashboard.reload} />
         </View>
-        <SyncPanel />
         <EmptyState
           title="Todavía no hay observaciones"
           message="Registra una observación en Captura o con el Agente y las métricas aparecerán aquí. El tablero se calcula en el dispositivo, sin conexión."
@@ -131,7 +129,6 @@ export function DashboardScreen() {
         <Tile label="Marcas" value={metrics.totals.brands} testID="tile-brands" />
       </View>
 
-      <SyncPanel />
       <Text style={styles.caption} testID="dashboard-scope">
         Calculado en este dispositivo el {computedFor}, a partir de{' '}
         {metrics.totals.observations} observación(es) guardada(s) localmente.
