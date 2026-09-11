@@ -5,7 +5,7 @@ import { startMicrophone, type MicrophoneSession } from '../../../services/captu
 
 export type VoiceState =
   | { phase: 'idle' }
-  | { phase: 'starting' }
+  | { phase: 'starting'; step: 'model' | 'microphone' }
   | { phase: 'listening'; partial: string }
   | { phase: 'finishing'; partial: string }
   | { phase: 'error'; message: string; audioPath?: string };
@@ -37,6 +37,18 @@ export function useVoiceCapture(runtime: AiRuntime, onFinal: (text: string, audi
     return () => { subscription.remove(); cancel(); };
   }, []);
 
+  const startingStep = state.phase === 'starting' ? state.step : null;
+  useEffect(() => {
+    if (!startingStep) return;
+    const timeout = setTimeout(() => {
+      cancel();
+      setState({ phase: 'error', message: startingStep === 'model'
+        ? 'La preparación de voz tardó demasiado. Revisa los modelos descargados y vuelve a intentarlo.'
+        : 'El micrófono no respondió. Revisa su permiso en los ajustes y vuelve a intentarlo.' });
+    }, startingStep === 'model' ? 120_000 : 20_000);
+    return () => clearTimeout(timeout);
+  }, [startingStep]);
+
   async function start() {
     if (lock.current) return;
     lock.current = true;
@@ -44,7 +56,7 @@ export function useVoiceCapture(runtime: AiRuntime, onFinal: (text: string, audi
     partial.current = '';
     retainedAudio.current = undefined;
     finishing.current = false;
-    setState({ phase: 'starting' });
+    setState({ phase: 'starting', step: 'model' });
     const fail = () => {
       if (token !== generation.current) return;
       // stop() owns failures once the WAV is being finalized, so its catch can
@@ -62,6 +74,7 @@ export function useVoiceCapture(runtime: AiRuntime, onFinal: (text: string, audi
       if (token !== generation.current) { session.cancel(); return; }
       speech.current = session;
       void session.result.catch(fail);
+      setState({ phase: 'starting', step: 'microphone' });
       const microphone = await startMicrophone(session, fail);
       if (token !== generation.current) { microphone.cancel(); return; }
       mic.current = microphone;

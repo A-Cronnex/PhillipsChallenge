@@ -15,8 +15,11 @@ export function pcm16(samples: Float32Array): Uint8Array {
 
 /** Native I/O stays behind a service, loaded only when the user chooses voice. */
 export async function startMicrophone(speech: SpeechSession, onError: () => void): Promise<MicrophoneSession> {
-  const { AudioManager, AudioRecorder, FileFormat } = await import('react-native-audio-api');
-  if (await AudioManager.requestRecordingPermissions() !== 'Granted') throw new Error('Permite el acceso al micrófono en los ajustes del dispositivo.');
+  const { AudioManager, AudioRecorder, FileFormat } = require('react-native-audio-api') as typeof import('react-native-audio-api');
+  // Android's native request always opens a permission round-trip, even when
+  // already granted. Check first so repeat recordings need no activity callback.
+  if (await AudioManager.checkRecordingPermissions() !== 'Granted' &&
+      await AudioManager.requestRecordingPermissions() !== 'Granted') throw new Error('Permite el acceso al micrófono en los ajustes del dispositivo.');
   AudioManager.setAudioSessionOptions({ iosCategory: 'record', iosMode: 'default', iosOptions: [] });
   if (!await AudioManager.setAudioSessionActivity(true)) throw new Error('El micrófono no está disponible.');
   const recorder = new AudioRecorder();
