@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Image, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, Alert, Image, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useIsFocused } from '@react-navigation/native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { AppButton } from '../../../components/ui/AppButton';
+import { ProgressBar } from '../../../components/ui/ProgressBar';
+import { formatBytes } from '../../../lib/format';
 import { colors, MIN_TOUCH_TARGET, radii, spacing, typography } from '../../../lib/theme';
 import type { AiRuntime, AgentActivity } from '../application/ports';
 import { missingRequiredFields } from '../domain/conversation';
@@ -11,6 +13,7 @@ import { labelOf } from '../domain/fields';
 import { AIVoiceOrb, AGENT_STATE_LABELS } from './AIVoiceOrb';
 import { ConversationReview } from './ConversationReview';
 import { NameplateReview } from './NameplateReview';
+import { NameplateCamera } from './NameplateCamera';
 import { useConversation } from './useConversation';
 import { useNameplateCapture } from './useNameplateCapture';
 import { useVoiceCapture } from './useVoiceCapture';
@@ -47,7 +50,8 @@ export function ConversationScreen({ runtime, userId, photoFirst = false, onManu
     : voiceActive || vision.state.phase === 'processing' || chat.runtimePhase === 'preparing' ? 'thinking' : 'idle';
   const compact = keyboardOpen || dimensions.height < 760 || dimensions.fontScale > 1.3;
   const status = chat.runtimePhase === 'preparing' ? 'Preparando el agente'
-    : voice.state.phase === 'starting' ? 'Preparando el micrófono'
+    : voice.state.phase === 'starting' ? voice.state.step === 'model' ? 'Preparando voz' : 'Activando el micrófono'
+    : voice.state.phase === 'listening' ? 'Grabando · pulsa ■ para enviar'
     : voice.state.phase === 'finishing' && chat.activity === 'idle' ? 'Terminando la transcripción'
     : !ready ? 'Tu asistente de campo' : saved ? 'Observación guardada' : AGENT_STATE_LABELS[activity];
   useEffect(() => {
@@ -75,9 +79,37 @@ export function ConversationScreen({ runtime, userId, photoFirst = false, onManu
     Keyboard.dismiss();
     if (await chat.sendText(text)) setDraft('');
   }
+  /**
+   * Confirms, then reports exactly why a delete was refused.
+   *
+   * The reasons are not interchangeable: one means the capture became a
+   * historical observation, the other that the server already holds it and a
+   * local delete would be undone by the next download (`ports.ts`).
+   */
+  function confirmDelete() {
+    Alert.alert(
+      'Eliminar conversación',
+      'Se descartará esta conversación y su borrador en este dispositivo. No se borra ninguna observación ya guardada.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Eliminar', style: 'destructive', onPress: () => void (async () => {
+            const result = await chat.deleteConversation();
+            if (result.status === 'deleted') return;
+            Alert.alert('No se eliminó', {
+              has_observation: 'Esta conversación ya produjo una observación guardada. Borrarla dejaría esa observación sin su origen, así que se conserva.',
+              sync_in_flight: 'Hay una operación en curso sobre esta conversación. Inténtalo de nuevo en un momento.',
+            }[result.reason]);
+          })(),
+        },
+      ]
+    );
+  }
   const reviewProposal = 'proposal' in vision.state ? vision.state.proposal : undefined;
   const reviewError = vision.state.phase === 'error' ? vision.state.message : undefined;
   return <SafeAreaView style={styles.screen} edges={['top', 'left', 'right']}>
+    {focused && vision.state.phase === 'capturing' && vision.state.source === 'camera'
+      ? <NameplateCamera onCaptured={vision.captured} onCancel={() => void vision.cancel()} onLibrary={() => void vision.capture('library')} /> : null}
     <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       {reviewing ? <ConversationReview conversation={chat.conversation} onCancel={() => setReviewing(false)} onSaved={() => { chat.markSaved(); setReviewing(false); }} />
         : reviewProposal ? <NameplateReview key={reviewProposal.imagePath} proposal={reviewProposal} busy={vision.state.phase === 'submitting'} error={reviewError}
@@ -112,9 +144,33 @@ export function ConversationScreen({ runtime, userId, photoFirst = false, onManu
             {!ready ? <View style={styles.card}>
               <Text style={styles.cardTitle}>Inteligencia en tu dispositivo</Text>
               <Text style={styles.body}>Prepara los modelos con conexión antes de salir a campo. Una vez descargados, puedes capturar sin internet.</Text>
+              {/*
+                Models are fetched once and reused offline, so what this device
+                is still missing is stated before the user leaves for the field
+                (product requirement, 2026-09-10).
+              */}
+              {chat.readiness ? <Text style={styles.body} testID="model-readiness" accessibilityLiveRegion="polite">
+                {/*
+                  "archivos", not "modelos": the four models of
+                  docs/tech-stack.md §6 ship as more files than that — vision
+                  needs its projector, Whisper its VAD — and calling those
+                  extra files "modelos" made the count look wrong to the user.
+                */}
+                {chat.readiness.allCached
+                  ? 'Los modelos ya están descargados en este dispositivo. No se necesita conexión.'
+                  : `Faltan ${chat.readiness.missing.length} de ${chat.readiness.assets.length} archivos de modelo (${formatBytes(chat.readiness.missingBytes)}). Se descargan una sola vez.`}
+              </Text> : null}
               {chat.runtimeError ? <Text style={styles.error} accessibilityRole="alert">{chat.runtimeError}</Text> : null}
-              {chat.runtimePhase === 'preparing' ? <ActivityIndicator color={colors.primary} accessibilityLabel="Cargando modelos" />
-                : <AppButton title={chat.runtimePhase === 'unavailable' ? 'Reintentar carga de modelos' : 'Preparar agente'} disabled={chat.busy || voiceActive || visionActive} onPress={() => void chat.prepare()} />}
+              {chat.runtimePhase === 'preparing'
+                ? chat.progress && chat.progress.totalBytes > 0
+                  ? <ProgressBar testID="model-download-progress" fraction={chat.progress.fraction}
+                      label={chat.progress.current
+                        ? `Descargando ${chat.progress.current} · ${formatBytes(chat.progress.downloadedBytes)} de ${formatBytes(chat.progress.totalBytes)}`
+                        : 'Cargando modelos en memoria…'} />
+                  : <ActivityIndicator color={colors.primary} accessibilityLabel="Cargando modelos" />
+                : <AppButton title={chat.runtimePhase === 'unavailable' ? 'Reintentar carga de modelos'
+                    : chat.readiness && !chat.readiness.allCached ? 'Descargar y preparar agente' : 'Preparar agente'}
+                    disabled={chat.busy || voiceActive || visionActive} onPress={() => void chat.prepare()} />}
               {onManualCapture ? <Pressable accessibilityRole="button" onPress={onManualCapture} style={styles.textButton}><Text style={styles.link}>Continuar con captura manual</Text></Pressable> : null}
             </View> : null}
             {vision.state.phase === 'capturing' || vision.state.phase === 'processing' ? <View style={styles.card}>
@@ -153,10 +209,20 @@ export function ConversationScreen({ runtime, userId, photoFirst = false, onManu
               : chat.conversation.turns.length > 0 ? <View style={styles.card}>
                 <Text style={styles.body}>{missingRequiredFields(chat.conversation).length ? `Por completar: ${missingRequiredFields(chat.conversation).map(labelOf).join(', ')}.` : 'La información está lista para tu revisión final.'}</Text>
                 <AppButton title="Revisar y guardar observación" disabled={chat.busy || voiceActive || visionActive} onPress={() => setReviewing(true)} />
+                {/*
+                  Destructive, so it is a plain text button rather than a
+                  filled one, and it always confirms first. Only offered once
+                  there is something to discard.
+                */}
+                <Pressable accessibilityRole="button" accessibilityLabel="Eliminar esta conversación"
+                  disabled={chat.busy || voiceActive || visionActive} onPress={confirmDelete}
+                  style={styles.textButton} testID="delete-conversation">
+                  <Text style={[styles.link, styles.destructive]}>Eliminar conversación</Text>
+                </Pressable>
               </View> : null}
           </ScrollView>
           <View style={styles.composerArea}>
-            {voiceActive && chat.activity === 'idle' ? <Pressable accessibilityRole="button" accessibilityLabel="Cancelar grabación" onPress={voice.cancel} style={styles.textButton}><Text style={styles.link}>Cancelar grabación</Text></Pressable> : null}
+            {voiceActive && chat.activity === 'idle' ? <Pressable accessibilityRole="button" accessibilityLabel={voice.state.phase === 'starting' ? 'Cancelar preparación de voz' : 'Cancelar grabación'} onPress={voice.cancel} style={styles.textButton}><Text style={styles.link}>{voice.state.phase === 'starting' ? 'Cancelar preparación de voz' : 'Cancelar grabación'}</Text></Pressable> : null}
             <View style={styles.composer}>
               <TextInput value={draft} onChangeText={setDraft} placeholder="Escribe un mensaje…" placeholderTextColor={colors.onSurfaceVariant}
                 accessibilityLabel="Mensaje para el agente" multiline editable={!disabled} style={styles.input} maxLength={4000} />
@@ -164,7 +230,7 @@ export function ConversationScreen({ runtime, userId, photoFirst = false, onManu
                 disabled={voice.state.phase !== 'listening' && disabled} style={[styles.mic, voice.state.phase === 'listening' && styles.recording]}
                 accessibilityRole="button" accessibilityLabel={voice.state.phase === 'listening' ? 'Terminar grabación y enviar' : 'Hablar con el agente'}
                 accessibilityState={{ disabled: voice.state.phase !== 'listening' && disabled }}>
-                <MaterialIcons name={voice.state.phase === 'listening' ? 'stop' : 'mic'} size={24} color={colors.onPrimary} />
+                {voice.state.phase === 'starting' || voice.state.phase === 'finishing' ? <ActivityIndicator color={colors.onPrimary} /> : <MaterialIcons name={voice.state.phase === 'listening' ? 'stop' : 'mic'} size={24} color={colors.onPrimary} />}
               </Pressable>
               {draft.trim() ? <Pressable accessibilityRole="button" accessibilityLabel="Enviar mensaje" disabled={disabled} onPress={() => void send()} style={styles.iconButton}>
                 <MaterialIcons name="arrow-upward" size={24} color={disabled ? colors.disabled : colors.primary} />
@@ -220,4 +286,5 @@ const styles = StyleSheet.create({
   iconButton: { width: MIN_TOUCH_TARGET, minHeight: MIN_TOUCH_TARGET, alignItems: 'center', justifyContent: 'center' },
   textButton: { minHeight: MIN_TOUCH_TARGET, justifyContent: 'center', alignItems: 'center' },
   link: { ...typography.bodyMedium, color: colors.primary },
+  destructive: { color: colors.error },
 });
