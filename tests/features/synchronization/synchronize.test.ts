@@ -119,6 +119,11 @@ function createTransport(
       requests.push(request);
       return responder(request, requests.length - 1);
     },
+    // The upload run never pulls. Present only to satisfy the port; a call
+    // here would mean `runSynchronization` had started doing two jobs.
+    async pull() {
+      throw new Error('runSynchronization must not pull.');
+    },
   };
 }
 

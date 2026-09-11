@@ -6,7 +6,13 @@
  * first working when the second does not (docs/architecture.md §8).
  */
 import type { SyncEntityType } from '../../../types/domain';
-import type { SyncRequest, SyncResponse } from '../../../types/sync-contract';
+import type {
+  PulledChange,
+  SyncPullRequest,
+  SyncPullResponse,
+  SyncRequest,
+  SyncResponse,
+} from '../../../types/sync-contract';
 import type { PendingChange } from '../domain/pending-change';
 
 export interface EntityRef {
@@ -94,6 +100,48 @@ export interface DeviceIdentityRepository {
   getOrCreateDeviceId(at: string): Promise<string>;
 }
 
+export type PullTransportResult =
+  | { status: 'ok'; response: SyncPullResponse }
+  | { status: 'failed'; reason: string; retryable: boolean };
+
+/**
+ * Why a pulled change was not written locally.
+ *
+ * `local_pending` is the confirmed conflict policy seen from this direction:
+ * client-wins (docs/offline-sync.md §8) means an unsent local edit outranks
+ * the server's version, so the server's copy is skipped and the local one goes
+ * out on the next upload. Nothing is discarded either way.
+ */
+export type SkipReason = 'local_pending' | 'missing_reference';
+
+export interface AppliedPull {
+  applied: number;
+  skipped: { entityType: SyncEntityType; entityId: string; reason: SkipReason }[];
+}
+
+export interface SyncDownloadRepository {
+  /** The cursor of the last fully applied page, or null if never pulled. */
+  getPullCursor(): Promise<string | null>;
+  /** Stored only after a page is applied, so an interrupted page is re-fetched. */
+  setPullCursor(cursor: string, at: string): Promise<void>;
+
+  /** Ids of every site held locally, to keep coordinate-less ones in scope. */
+  listKnownSiteIds(): Promise<string[]>;
+  /** Bounding boxes of the map regions whose download finished. */
+  listDownloadedRegionBounds(): Promise<[number, number, number, number][]>;
+
+  /**
+   * Writes one page of server changes into the local database.
+   *
+   * Must be atomic per page and must never overwrite a record that has an
+   * unsent local change — that row is reported in `skipped` instead
+   * (docs/offline-sync.md §8). It also writes `sync_records.server_version`
+   * for what it applies, so the next upload from this device carries the right
+   * `baseServerVersion` and does not read as a conflict.
+   */
+  applyPulledChanges(changes: PulledChange[], at: string): Promise<AppliedPull>;
+}
+
 export interface SyncTransport {
   /**
    * Uploads one batch.
@@ -104,4 +152,7 @@ export interface SyncTransport {
    * the right records and continue.
    */
   push(request: SyncRequest): Promise<TransportResult>;
+
+  /** Reads one page of server changes. Never throws, for the same reason. */
+  pull(request: SyncPullRequest): Promise<PullTransportResult>;
 }
